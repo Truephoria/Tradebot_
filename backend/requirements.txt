@@ -1,0 +1,6 @@
+Flask==2.3.2
+Flask-Cors==3.0.10
+Flask-SocketIO==5.3.4
+python-dotenv==1.0.0
+openai==0.27.8
+telethon==1.28.5
