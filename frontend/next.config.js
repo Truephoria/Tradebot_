@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: 'export',
   reactStrictMode: true, // Keep this for better error reporting
   output: 'standalone', // Keep this for Amplify compatibility
   typescript: {
