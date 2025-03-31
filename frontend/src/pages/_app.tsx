@@ -1,16 +1,14 @@
-// src/pages/_app.tsx
 import '../styles/globals.css';
-import { ThemeProvider as MuiThemeProvider } from '@mui/material/styles';
 import { ThemeProvider } from '../components/ThemeProvider';
-import muiTheme from '../theme';
+import { AuthProvider } from '../context/authProvider';
 import type { AppProps } from 'next/app';
 
 export default function App({ Component, pageProps }: AppProps) {
   return (
-    <MuiThemeProvider theme={muiTheme}>
+    <AuthProvider>
       <ThemeProvider>
         <Component {...pageProps} />
       </ThemeProvider>
-    </MuiThemeProvider>
+    </AuthProvider>
   );
 }

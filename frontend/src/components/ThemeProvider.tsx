@@ -1,5 +1,4 @@
-// src/components/ThemeProvider.tsx
-"use client";  // Client-side only
+"use client";
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 
@@ -13,15 +12,17 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setTheme] = useState<Theme>('system');
+  const [theme, setTheme] = useState<Theme>('dark'); // Default to dark
 
   useEffect(() => {
     const applyTheme = (currentTheme: Theme) => {
-      document.documentElement.classList.remove('light', 'dark');
+      const root = document.documentElement;
+      root.classList.remove('light', 'dark');
       const effectiveTheme = currentTheme === 'system'
         ? window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
         : currentTheme;
-      document.documentElement.classList.add(effectiveTheme);
+      root.classList.add(effectiveTheme);
+      console.log('Applied theme:', effectiveTheme); // Debug
     };
 
     applyTheme(theme);

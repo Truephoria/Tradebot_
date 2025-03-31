@@ -1,0 +1,106 @@
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Light Theme - Purple + Black */
+    --background: 270 10% 95%;
+    --foreground: 270 10% 10%;
+    --card: 270 10% 98%;
+    --card-foreground: 270 10% 10%;
+    --popover: 270 10% 98%;
+    --popover-foreground: 270 10% 10%;
+    --primary: 252 86% 58%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 250 40% 96.1%;
+    --secondary-foreground: 265 30% 40%;
+    --muted: 250 40% 96.1%;
+    --muted-foreground: 265 10% 40%;
+    --accent: 265 30% 90%;
+    --accent-foreground: 265 40% 25%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 265 10% 90%;
+    --input: 265 10% 90%;
+    --ring: 252 86% 58%;
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    /* Dark Theme - Purple + Black */
+    --background: 270 30% 5%;
+    --foreground: 0 0% 98%;
+    --card: 270 25% 8%;
+    --card-foreground: 0 0% 98%;
+    --popover: 270 25% 8%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 252 86% 58%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 270 20% 12%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 270 20% 12%;
+    --muted-foreground: 270 10% 70%;
+    --accent: 270 20% 12%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 270 25% 18%;
+    --input: 270 25% 18%;
+    --ring: 252 86% 58%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html, body {
+    @apply h-full antialiased;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans tracking-tight;
+  }
+
+  #root {
+    @apply h-full;
+  }
+}
+
+@layer components {
+  .card-shadow {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.1);
+    transition: all 0.3s cubic-bezier(.25,.8,.25,1);
+  }
+  
+  .dark .card-shadow {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2), 0 1px 2px rgba(0, 0, 0, 0.2);
+  }
+  
+  .card-shadow:hover {
+    box-shadow: 0 14px 28px rgba(0, 0, 0, 0.05), 0 10px 10px rgba(0, 0, 0, 0.04);
+  }
+  
+  .dark .card-shadow:hover {
+    box-shadow: 0 14px 28px rgba(0, 0, 0, 0.25), 0 10px 10px rgba(0, 0, 0, 0.22);
+  }
+
+  .glass-morphism {
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+  }
+  
+  .dark .glass-morphism {
+    background: rgba(30, 22, 50, 0.8);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+  }
+}

@@ -1,4 +1,3 @@
-// src/components/ThemeSwitcher.tsx
 "use client";
 
 import { useTheme } from './ThemeProvider';
@@ -40,8 +39,8 @@ export function ThemeSwitcher() {
         <DropdownMenuItem onClick={() => setTheme('system')}>
           <Laptop className="mr-2 h-4 w-4" />
           <span>System</span>
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  }

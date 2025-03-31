@@ -1,4 +1,4 @@
-// frontend/src/components/Navbar.tsx
+// src/components/Navbar.tsx
 'use client';
 import { usePathname } from 'next/navigation';
 import React from 'react';
@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils';
 import { ThemeSwitcher } from './ThemeSwitcher';
 import { LogOut } from 'lucide-react';
 import { toast } from 'sonner';
-import useAuth from '@/hooks/useAuth'; // Import useAuth
+import useAuth from '@/hooks/useAuth';
 
 interface NavbarProps {
   className?: string;
@@ -17,11 +17,10 @@ interface NavbarProps {
 const Navbar: React.FC<NavbarProps> = ({ className }) => {
   const router = useRouter();
   const currentPath = usePathname();
-  const { user, logout, isAuthenticated } = useAuth(); // Use auth hook
+  const { user, logout, isAuthenticated } = useAuth();
 
-  // Handle sign out
   const handleSignOut = () => {
-    logout(); // Use the logout function from useAuth
+    logout();
     toast.success('Signed out successfully');
   };
 
@@ -61,6 +60,9 @@ const Navbar: React.FC<NavbarProps> = ({ className }) => {
 
         <nav className="hidden md:flex items-center space-x-1 border border-input rounded-lg p-1">
           <NavItem href="/" active={currentPath === '/'}>
+            Home
+          </NavItem>
+          <NavItem href="/dashboard" active={currentPath === '/dashboard'}>
             Dashboard
           </NavItem>
           <NavItem href="/settings" active={currentPath === '/settings'}>

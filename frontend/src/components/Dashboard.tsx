@@ -1,8 +1,8 @@
-// frontend/src/components/Dashboard.tsx
-"use client"; // Required for client-side hooks in Next.js App Router
+"use client";
+
 import React, { useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
-import { AccountStatus } from "@/utils/types"; // Ensure this exists
+import { AccountStatus } from "@/utils/types";
 import { initializeSocket, getSocket } from "@/utils/socket";
 import StatusCard from "./StatusCard";
 import SignalMonitor from "./SignalMonitor";
@@ -15,7 +15,7 @@ import { MetaDataType } from "@/types/metadata";
 import { useSignalStore } from "@/stores/signal-store";
 import { useMetadataStore } from "@/stores/metadata-store";
 import { useSettingStore } from "@/stores/settings-store";
-import { Socket } from "socket.io-client"; // Import Socket type
+import { Socket } from "socket.io-client";
 
 interface DashboardProps {
   className?: string;
@@ -24,12 +24,9 @@ interface DashboardProps {
 const Dashboard: React.FC<DashboardProps> = ({ className }) => {
   const metadataState = useMetadataStore();
   const signalState = useSignalStore();
-  // Type the ref to allow Socket | null
   const socket = useRef<Socket | null>(null);
 
-  // Listen for new signals from WebSocket
   useEffect(() => {
-    // Initialize socket connection
     initializeSocket();
     socket.current = getSocket();
 
@@ -38,11 +35,10 @@ const Dashboard: React.FC<DashboardProps> = ({ className }) => {
       return;
     }
 
-    // Type assertion or non-null check ensures socket.current is Socket here
     const currentSocket = socket.current;
 
     currentSocket.on("new_signal", (signal: SignalStateType) => {
-      signalState.setSignal(signal); // Fixed: Changed setSignalState to setSignal
+      signalState.setSignal(signal);
     });
 
     currentSocket.on("new_metadata", (data: MetaDataType) => {
@@ -50,12 +46,11 @@ const Dashboard: React.FC<DashboardProps> = ({ className }) => {
       metadataState.setMetaData(data);
     });
 
-    // Cleanup function
     return () => {
       currentSocket.off("new_signal");
       currentSocket.off("new_metadata");
     };
-  }, [signalState, metadataState]); // Dependencies for stores
+  }, [signalState, metadataState]);
 
   return (
     <div className={cn("w-full py-8", className)}>
