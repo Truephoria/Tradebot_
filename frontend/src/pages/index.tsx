@@ -2,7 +2,7 @@ import React from 'react';
 import Navbar from '@/components/Navbar';
 import Dashboard from '@/components/Dashboard';
 
-const Index = () => {
+const index = () => {
   return (
     <div className="min-h-screen bg-background transition-colors duration-300">
       <Navbar />
@@ -14,4 +14,4 @@ const Index = () => {
 };
 
 
-export default Index;
+export default index;
