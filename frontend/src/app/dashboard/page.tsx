@@ -1,9 +1,9 @@
-import React from 'react';
-import Navbar from '@/components/Navbar';
+'use client'; // Required for client-side components/hooks
 import Dashboard from '@/components/Dashboard';
+import Navbar from '@/components/Navbar';
 import { AuthProvider } from '@/context/authProvider';
 
-const DashboardPage = () => {
+export default function DashboardPage() {
   return (
     <AuthProvider>
       <div className="min-h-screen bg-background transition-colors duration-300">
@@ -14,6 +14,4 @@ const DashboardPage = () => {
       </div>
     </AuthProvider>
   );
-};
-
-export default DashboardPage;
+}

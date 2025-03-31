@@ -1,9 +1,9 @@
-// frontend/src/app/layout.tsx
 import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import '@/styles/globals.css';
 import Navbar from '@/components/Navbar';
 import { ThemeProvider } from '@/components/ThemeProvider';
+import { AuthProvider } from '@/context/authProvider';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -16,8 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'TradeBot', // Updated from default
-  description: 'Automated Trading Platform', // Updated from default
+  title: 'TradeBot',
+  description: 'Automated Trading Platform',
 };
 
 export default function RootLayout({
@@ -30,10 +30,14 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen bg-background transition-colors duration-300`}
       >
-        <ThemeProvider>
-          <Navbar />
-          {children}
-        </ThemeProvider>
+        <AuthProvider>
+          <ThemeProvider>
+            <Navbar />
+            <main className="min-h-[calc(100vh-73px)] animate-fade-in">
+              {children}
+            </main>
+          </ThemeProvider>
+        </AuthProvider>
       </body>
     </html>
   );
