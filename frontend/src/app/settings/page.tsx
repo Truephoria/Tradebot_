@@ -1,6 +1,6 @@
 'use client';
 import React, { useEffect, useRef, useState } from 'react';
-import Navbar from '@/components/Navbar';
+
 import {
   Card,
   CardContent,
@@ -131,7 +131,7 @@ const SettingsPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-background transition-colors duration-300">
-      <Navbar />
+      
       <main className="container mx-auto py-6 px-4 min-h-[calc(100vh-73px)] animate-fade-in">
         <h1 className="text-2xl font-bold mb-6">Settings</h1>
 

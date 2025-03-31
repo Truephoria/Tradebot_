@@ -15,6 +15,7 @@ interface RiskManagerProps {
 }
 
 const RiskManager: React.FC<RiskManagerProps> = ({ className }) => {
+  
   const settingState = useSettingStore();
   const [settings, setSettings] = useState<SettingsType>(settingState.settings);
   const [isEditing, setIsEditing] = useState(false);
