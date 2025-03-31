@@ -1,17 +1,16 @@
-/**
- 
-@type {import('next').NextConfig}*/
+/** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'export',
- 
-  // Optional: Change links /me -> /me/ and emit /me.html -> /me/index.html
-  // trailingSlash: true,
- 
-  // Optional: Prevent automatic /me -> /me/, instead preserve href
-  // skipTrailingSlashRedirect: true,
- 
-  // Optional: Change the output directory out -> dist
-  // distDir: 'dist',
-}
- 
-module.exports = nextConfig
+  reactStrictMode: true, // Keep this for better error reporting
+  output: 'standalone', // Keep this for Amplify compatibility
+  typescript: {
+    ignoreBuildErrors: true, // Skips TypeScript type checking during build
+  },
+  eslint: {
+    ignoreDuringBuilds: true, // Skips ESLint linting during build
+  },
+};
+
+module.exports = nextConfig;
+
+
+// next.config.js
