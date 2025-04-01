@@ -1,19 +1,24 @@
 version: 1.0
-runtime: python311  # Optional since the Dockerfile specifies the base image
+runtime: python311
+build:
+  commands:
+    - python3 -m ensurepip --upgrade
+    - python3 -m pip install --upgrade pip
+    - pip install -r requirements.txt
 run:
-  command: python app.py  # Optional since the Dockerfile specifies CMD ["python", "app.py"]
+  command: python app.py
 env:
   - name: PYTHONUNBUFFERED
     value: "1"
   - name: API_ID
-    value: "your-api-id"  # Replace with your actual Telegram API ID
+    value: "your-api-id"
   - name: API_HASH
-    value: "your-api-hash"  # Replace with your actual Telegram API hash
+    value: "your-api-hash"
   - name: PHONE_NUMBER
-    value: "your-phone-number"  # Replace with your actual phone number
+    value: "your-phone-number"
   - name: CHANNEL_IDS
-    value: "-100123456789,-100987654321"  # Replace with your actual channel IDs
+    value: "-100123456789,-100987654321"
   - name: API_TOKEN
-    value: "your-api-token"  # Replace with a placeholder; update later
+    value: "your-api-token"
   - name: API_URL
-    value: "https://backend-id.region.awsapprunner.com"  # Replace with a placeholder; update after deployment
+    value: "https://backend-id.region.awsapprunner.com"
