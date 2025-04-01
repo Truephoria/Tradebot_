@@ -1,0 +1,24 @@
+version: 1.0
+runtime: python311  # Optional since the Dockerfile specifies the base image
+source:
+  directory: backend  # Source directory where your Dockerfile and app files are located
+build:
+  dockerfile: Dockerfile  # Path to the Dockerfile relative to the source directory
+port: 5000  # Matches EXPOSE 5000 in your Dockerfile
+start:
+  command: python app.py  # Optional since the Dockerfile specifies CMD ["python", "app.py"]
+env:
+  - name: PYTHONUNBUFFERED
+    value: "1"
+  - name: API_ID
+    value: "your-api-id"  # Replace with your actual Telegram API ID
+  - name: API_HASH
+    value: "your-api-hash"  # Replace with your actual Telegram API hash
+  - name: PHONE_NUMBER
+    value: "your-phone-number"  # Replace with your actual phone number
+  - name: CHANNEL_IDS
+    value: "-100123456789,-100987654321"  # Replace with your actual channel IDs
+  - name: API_TOKEN
+    value: "your-api-token"  # Replace with a placeholder; update later
+  - name: API_URL
+    value: "https://backend-id.region.awsapprunner.com"  # Replace with a placeholder; update after deployment
