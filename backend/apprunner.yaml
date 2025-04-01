@@ -1,7 +1,5 @@
 version: 1.0
 runtime: python311  # Optional since the Dockerfile specifies the base image
-build:
-  dockerfile: Dockerfile  # Path to the Dockerfile relative to the source directory
 port: 5000  # Matches EXPOSE 5000 in your Dockerfile
 run:
   command: python app.py  # Optional since the Dockerfile specifies CMD ["python", "app.py"]
