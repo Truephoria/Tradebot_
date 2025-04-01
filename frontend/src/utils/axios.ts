@@ -2,10 +2,9 @@
 import axios from "axios";
 
 const axiosServices = axios.create({
-  baseURL: "http://localhost:5000",
-  timeout: 5000, // 5-second timeout to prevent hanging
+  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000",
+  timeout: 5000,
 });
-
 axiosServices.interceptors.response.use(
   (response) => response,
   (error) => {

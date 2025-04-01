@@ -4,3 +4,11 @@ Flask-SocketIO==5.3.4
 python-dotenv==1.0.0
 openai==0.27.8
 telethon==1.28.5
+Flask-Bcrypt==0.7.1
+Flask-Session==0.4.0
+Flask-SQLAlchemy==2.5.1
+SQLAlchemy==1.4.23
+pyngrok==5.1.0
+psutil==5.8.0
+requests==2.26.0
+boto3==1.26.0

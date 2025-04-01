@@ -1,9 +1,8 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect } from "react";
 import { cn } from "@/lib/utils";
-import { AccountStatus } from "@/utils/types";
-import { initializeSocket, getSocket } from "@/utils/socket";
+import axios from "@/utils/axios";
 import StatusCard from "./StatusCard";
 import SignalMonitor from "./SignalMonitor";
 import RiskManager from "./RiskManager";
@@ -14,8 +13,9 @@ import { SignalStateType } from "@/types/signal";
 import { MetaDataType } from "@/types/metadata";
 import { useSignalStore } from "@/stores/signal-store";
 import { useMetadataStore } from "@/stores/metadata-store";
-import { useSettingStore } from "@/stores/settings-store";
-import { Socket } from "socket.io-client";
+import useAuth from "@/hooks/useAuth"; // Use useAuth instead of useAuthStore
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
 interface DashboardProps {
   className?: string;
@@ -24,33 +24,49 @@ interface DashboardProps {
 const Dashboard: React.FC<DashboardProps> = ({ className }) => {
   const metadataState = useMetadataStore();
   const signalState = useSignalStore();
-  const socket = useRef<Socket | null>(null);
+  const { token } = useAuth(); // Use useAuth hook
 
   useEffect(() => {
-    initializeSocket();
-    socket.current = getSocket();
+    if (!token) return; // Only start polling if the user is authenticated
 
-    if (!socket.current) {
-      console.error("Socket is not initialized.");
-      return;
-    }
+    const fetchUpdates = async () => {
+      try {
+        // Fetch latest signal
+        const signalResponse = await axios.get(`${API_URL}/api/signal`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const latestSignal: SignalStateType = signalResponse.data.signal;
+        if (latestSignal) {
+          signalState.setSignal(latestSignal);
+        }
 
-    const currentSocket = socket.current;
-
-    currentSocket.on("new_signal", (signal: SignalStateType) => {
-      signalState.setSignal(signal);
-    });
-
-    currentSocket.on("new_metadata", (data: MetaDataType) => {
-      console.log("Received metadata:", data);
-      metadataState.setMetaData(data);
-    });
-
-    return () => {
-      currentSocket.off("new_signal");
-      currentSocket.off("new_metadata");
+        // Fetch recent trades and metadata
+        const tradeResponse = await axios.get(`${API_URL}/api/trade/history`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const tradeData: MetaDataType = tradeResponse.data;
+        if (tradeData) {
+          metadataState.setMetaData({
+            balance: tradeData.balance ?? metadataState.balance,
+            pnl: tradeData.pnl ?? metadataState.pnl,
+            activeTrades: tradeData.activeTrades ?? metadataState.activeTrades,
+            tradeshistory: tradeData.tradeshistory ?? metadataState.tradeshistory,
+            totalTrades: tradeData.totalTrades ?? metadataState.totalTrades,
+            winRate: tradeData.winRate ?? metadataState.winRate,
+          });
+        }
+      } catch (err) {
+        console.error("Error fetching updates:", err);
+      }
     };
-  }, [signalState, metadataState]);
+
+    // Initial fetch
+    fetchUpdates();
+
+    // Set up polling every 10 seconds
+    const interval = setInterval(fetchUpdates, 10000);
+    return () => clearInterval(interval);
+  }, [token, signalState, metadataState]);
 
   return (
     <div className={cn("w-full py-8", className)}>

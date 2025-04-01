@@ -1,0 +1,5 @@
+sqlalchemy
+pymysql  # For MySQL (RDS)
+bcrypt
+pyjwt
+boto3

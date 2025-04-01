@@ -1,8 +1,6 @@
 from flask import Flask, jsonify, request, session
 from flask_bcrypt import Bcrypt
 from flask_session import Session
-from flask_sqlalchemy import SQLAlchemy
-import sqlalchemy
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 import os
@@ -12,7 +10,6 @@ from telethon import TelegramClient, events
 from openai import OpenAI
 import asyncio
 from threading import Thread
-from queue import Queue
 from enum import Enum
 import re
 from datetime import datetime, timedelta
@@ -20,11 +17,10 @@ import jwt
 from functools import wraps
 import logging
 import time
-from pyngrok import ngrok, conf
-import atexit
-import psutil
-import random
 import requests
+import boto3
+from botocore.exceptions import ClientError
+import uuid
 
 # Load environment variables
 load_dotenv()
@@ -36,110 +32,39 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-
-
-# Set ngrok auth token if available (optional, for free tier)
-NGROK_AUTH_TOKEN = os.getenv("NGROK_AUTH_TOKEN")
-if NGROK_AUTH_TOKEN:
-    ngrok.set_auth_token(NGROK_AUTH_TOKEN)
-
-# Function to kill existing ngrok processes
-def kill_ngrok_processes():
-    for proc in psutil.process_iter(['pid', 'name']):
-        if 'ngrok' in proc.info['name'].lower():
-            try:
-                proc.kill()
-                logger.info(f"Killed existing ngrok process with PID {proc.info['pid']}")
-            except psutil.NoSuchProcess:
-                pass
-    time.sleep(1)  # Wait for process to fully terminate
-
-# Function to check if ngrok is running and get the tunnel URL
-def check_ngrok():
-    try:
-        # Get current tunnels
-        tunnels = ngrok.get_tunnels()
-        for tunnel in tunnels:
-            if 'addr' in tunnel.config and tunnel.config['addr'] == 'http://localhost:5000':
-                logger.info(f"ngrok tunnel already exists: {tunnel.public_url}")
-                return tunnel.public_url
-        return None
-    except Exception as e:
-        logger.warning(f"Error checking ngrok tunnels: {e}")
-        return None
-
-# Function to start ngrok
-def start_ngrok():
-    public_url = check_ngrok()
-    if public_url:
-        return public_url
-    
-    logger.info("Starting ngrok for port 5000...")
-    try:
-        # Kill any existing ngrok processes to avoid session conflicts
-        kill_ngrok_processes()
-        
-        # Configure ngrok (optional: specify region or config)
-        pyngrok_config = conf.PyngrokConfig()
-        # Start tunnel
-        tunnel = ngrok.connect(5000, proto="http", bind_tls=True, domain="ideal-largely-flamingo.ngrok.app")
-        public_url = tunnel.public_url
-        logger.info(f"ngrok tunnel started: {public_url}")
-        return public_url
-    except Exception as e:
-        logger.error(f"Failed to start ngrok: {e}")
-        raise
-
-# Function to stop ngrok
-def stop_ngrok():
-    logger.info("Disconnecting ngrok...")
-    try:
-        tunnels = ngrok.get_tunnels()
-        for tunnel in tunnels:
-            if 'addr' in tunnel.config and tunnel.config['addr'] == 'http://localhost:5000':
-                ngrok.disconnect(tunnel.public_url)
-                logger.info(f"Disconnected tunnel: {tunnel.public_url}")
-        kill_ngrok_processes()  # Ensure process is fully terminated
-    except Exception as e:
-        logger.warning(f"Error disconnecting ngrok: {e}")
-
-# Register stop_ngrok to run on exit
-atexit.register(stop_ngrok)
-
-# Start ngrok and get the public URL
-NGROK_PUBLIC_URL = start_ngrok()
-
 # Configure CORS explicitly for API routes
-CORS(app, resources={r"/api/*": {"origins": "http://localhost:3000"}}, supports_credentials=True)
+CORS(app, resources={r"/api/*": {"origins": "https://main.d1bpy75hw1zntc.amplifyapp.com/"}}, supports_credentials=True)
 
 # Configure SocketIO with CORS
-socketio = SocketIO(app, cors_allowed_origins="http://localhost:3000")
+socketio = SocketIO(app, cors_allowed_origins="https://main.d1bpy75hw1zntc.amplifyapp.com/")
 
-# Configure SQLAlchemy (for your main database)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///trading_bot.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-db = SQLAlchemy(app)  # Your main SQLAlchemy instance
-
-# Configure flask-session to use SQLAlchemy with YOUR existing `db`
-app.config["SESSION_TYPE"] = "sqlalchemy"  # Use SQLAlchemy backend
-app.config["SESSION_SQLALCHEMY"] = db  # Reuse your existing SQLAlchemy instance
-app.config["SESSION_SQLALCHEMY_TABLE"] = "sessions"  # Optional: custom table name
+# Configure flask-session to use filesystem (since we're removing SQLAlchemy)
+app.config["SESSION_TYPE"] = "filesystem"
 app.config["SESSION_PERMANENT"] = True
-app.config["PERMANENT_SESSION_LIFETIME"] = 3600  # Session lifetime in seconds
+app.config["PERMANENT_SESSION_LIFETIME"] = 3600
 app.config['SECRET_KEY'] = os.getenv("SECRET_KEY")
 
-# Initialize flask-session AFTER SQLAlchemy
-session_handler = Session(app)  # Renamed to avoid shadowing built-in `session`
+# Initialize flask-session
+session_handler = Session(app)
 bcrypt = Bcrypt(app)
 
 # Initialize OpenAI client
 openai_Client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# Initialize DynamoDB client
+dynamodb = boto3.resource('dynamodb')
+users_table = dynamodb.Table('Users')
+channels_table = dynamodb.Table('Channels')
+signals_table = dynamodb.Table('Signals')
+take_profits_table = dynamodb.Table('TakeProfits')
+settings_table = dynamodb.Table('Settings')
+trades_table = dynamodb.Table('Trades')
+
 # Telegram Configuration
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 PHONE_NUMBER = os.getenv("PHONE_NUMBER")
-SECRET_KEY = os.getenv("SECRET_KEY")  # Ensure this is in your .env file
+SECRET_KEY = os.getenv("SECRET_KEY")
 
 # Enums for status tracking
 class SignalStatus(Enum):
@@ -154,87 +79,254 @@ class SettingStatus(Enum):
 
 settingStatus = SettingStatus.IDLE
 
-# Database Models
-class User(db.Model):
-    __tablename__ = "users"
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(30))
-    email = db.Column(db.String, unique=True)
-    password = db.Column(db.String(30))
+# Database Initialization
+def init_db():
+    default_settings = [
+        ('allowedSymbols', 'EURUSD,GBPUSD,XAUUSD,USDJPY,US30'),
+        ('botEnabled', 'True'),
+        ('enableTrailingStop', 'True'),
+        ('maxDailyLoss', '3'),
+        ('maxTradesPerDay', '10'),
+        ('minimumRRR', '1.5'),
+        ('riskType', 'PERCENTAGE'),
+        ('riskValue', '1.5'),
+        ('tradingHoursStart', '08:00'),
+        ('tradingHoursEnd', '16:00')
+    ]
+    for key, value in default_settings:
+        try:
+            response = settings_table.get_item(Key={'key': key})
+            if 'Item' not in response:
+                settings_table.put_item(Item={'key': key, 'value': value})
+        except ClientError as e:
+            logger.error(f"Error initializing setting {key}: {str(e)}")
+            raise e
+    logger.info("DynamoDB initialized with default settings")
 
-class Channel(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    channel_id = db.Column(db.String(100), unique=True, nullable=False)
-    channel_name = db.Column(db.String(100))
-    is_active = db.Column(db.Boolean, default=False)
+def add_channels(channels):
+    try:
+        # Delete existing channels
+        response = channels_table.scan()
+        for item in response.get('Items', []):
+            channels_table.delete_item(Key={'channel_id': item['channel_id']})
 
-    def to_dict(self):
-        return {
-            'channel_id': self.channel_id,
-            'channel_name': self.channel_name,
-            'is_active': self.is_active,
-        }
+        # Add new channels
+        for channel in channels:
+            channels_table.put_item(Item={
+                'channel_id': channel['id'],
+                'channel_name': channel['name'],
+                'is_active': False
+            })
+        logger.info(f"Added {len(channels)} channels to DynamoDB")
+        return get_all_channels()
+    except Exception as e:
+        logger.error(f"Failed to update channels: {str(e)}")
+        raise Exception(f"Failed to update channels: {str(e)}")
 
-class Signal(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    channel = db.Column(db.BigInteger)
-    symbol = db.Column(db.String(20))
-    entry_price = db.Column(db.Float)
-    action = db.Column(db.String(10))  # 'BUY' or 'SELL'
-    stop_loss = db.Column(db.Float)
-    created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
+def get_all_channels():
+    try:
+        response = channels_table.scan()
+        all_channels = response.get('Items', [])
+        active_channels = [channel for channel in all_channels if channel['is_active']]
+        logger.info(f"Retrieved {len(all_channels)} channels, {len(active_channels)} active")
+        return [{
+            'channel_id': channel['channel_id'],
+            'channel_name': channel['channel_name'],
+            'is_active': channel['is_active']
+        } for channel in all_channels]
+    except Exception as e:
+        logger.error(f"Error retrieving channels: {str(e)}")
+        raise e
 
-    def to_dict(self):
-        return {
-            'channel': self.channel,
-            'symbol': self.symbol,
-            'entry_price': self.entry_price,
-            'action': self.action,
-            'stop_loss': self.stop_loss
-        }
+def get_channels_is_active(active_only=True):
+    try:
+        response = channels_table.scan()
+        all_channels = response.get('Items', [])
+        active_channels = [channel for channel in all_channels if channel['is_active'] == active_only]
+        return [channel['channel_id'] for channel in active_channels]
+    except Exception as e:
+        logger.error(f"Error retrieving active channels: {str(e)}")
+        raise e
 
-class TakeProfit(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    signal_id = db.Column(db.Integer, db.ForeignKey('signal.id'))
-    price = db.Column(db.Float)
-    signal = db.relationship('Signal', backref=db.backref('take_profits', lazy=True))
+def update_channel_status(channel_id, is_active):
+    try:
+        response = channels_table.update_item(
+            Key={'channel_id': channel_id},
+            UpdateExpression='SET is_active = :val',
+            ExpressionAttributeValues={':val': is_active},
+            ReturnValues='UPDATED_NEW'
+        )
+        logger.info(f"Updated channel {channel_id} status to {is_active}")
+        return True
+    except ClientError as e:
+        logger.warning(f"Channel {channel_id} not found for status update: {str(e)}")
+        return False
 
-class Setting(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    key = db.Column(db.String(50), unique=True)
-    value = db.Column(db.String(255))
+def get_current_settings():
+    try:
+        response = settings_table.scan()
+        settings = response.get('Items', [])
+        settings_dict = {}
+        for setting in settings:
+            key = setting['key']
+            value = setting['value']
+            if key in ['botEnabled', 'enableTrailingStop']:
+                value = value.lower() == 'true'
+            elif key in ['maxDailyLoss', 'maxTradesPerDay', 'minimumRRR', 'riskValue']:
+                value = float(value)
+            settings_dict[key] = value
+        return settings_dict
+    except Exception as e:
+        logger.error(f"Error fetching settings: {str(e)}")
+        raise e
 
-    @staticmethod
-    def get_all_as_dict():
-        settings = Setting.query.all()
-        return {s.key: s.value for s in settings}
+def validate_setting_value(key, value):
+    if key in ['botEnabled', 'enableTrailingStop']:
+        if not isinstance(value, bool):
+            raise ValueError(f"{key} must be a boolean")
+    elif key in ['maxDailyLoss', 'maxTradesPerDay', 'minimumRRR', 'riskValue']:
+        try:
+            float(value)
+        except ValueError:
+            raise ValueError(f"{key} must be a number")
+    elif key in ['tradingHoursStart', 'tradingHoursEnd']:
+        if not re.match(r'^\d{2}:\d{2}$', str(value)):
+            raise ValueError(f"{key} must be in HH:MM format")
+    return str(value)
+
+def update_setting(key, value):
+    try:
+        validated_value = validate_setting_value(key, value)
+        settings_table.update_item(
+            Key={'key': key},
+            UpdateExpression='SET #val = :val',
+            ExpressionAttributeNames={'#val': 'value'},
+            ExpressionAttributeValues={':val': validated_value}
+        )
+        logger.info(f"Updated setting {key} to {validated_value}")
+        return True
+    except ClientError as e:
+        logger.error(f"Error updating setting {key}: {str(e)}")
+        return False
+
+def create_signal(signal_data):
+    required_fields = ['symbol', 'entry_price', 'action', 'stop_loss']
+    for field in required_fields:
+        if field not in signal_data:
+            raise ValueError(f"Missing required field: {field}")
     
-class Trade(db.Model):
-    __tablename__ = "trades"
-    id = db.Column(db.Integer, primary_key=True)
-    symbol = db.Column(db.String(20), nullable=False)
-    action = db.Column(db.String(10), nullable=False)  # 'BUY' or 'SELL'
-    entry_price = db.Column(db.Float, nullable=False)
-    stop_loss = db.Column(db.Float, nullable=False)
-    take_profits = db.Column(db.Text, nullable=False)  # JSON string of take-profit levels
-    volume = db.Column(db.Float, nullable=False)
-    status = db.Column(db.String(20), default='pending')  # pending, sent, executed, failed
-    created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
-    updated_at = db.Column(db.DateTime, onupdate=db.func.current_timestamp())
+    signal_id = int(uuid.uuid4().int & (1<<31)-1)  # Generate a 31-bit integer ID
+    created_at = datetime.utcnow().isoformat()
+    signal_item = {
+        'id': signal_id,
+        'channel': 1,  # Hardcoded for now
+        'symbol': signal_data['symbol'].upper(),
+        'entry_price': float(signal_data['entry_price']),
+        'action': signal_data['action'].upper(),
+        'stop_loss': float(signal_data['stop_loss']),
+        'created_at': created_at
+    }
+    signals_table.put_item(Item=signal_item)
 
-    def to_dict(self):
+    if 'take_profits' in signal_data and isinstance(signal_data['take_profits'], list):
+        for tp in signal_data['take_profits']:
+            tp_id = int(uuid.uuid4().int & (1<<31)-1)
+            take_profits_table.put_item(Item={
+                'id': tp_id,
+                'signal_id': signal_id,
+                'price': float(tp)
+            })
+    
+    logger.info(f"Created new signal with ID {signal_id}")
+    return signal_item
+
+def get_latest_signal():
+    try:
+        response = signals_table.scan()
+        signals = response.get('Items', [])
+        if not signals:
+            return None
+        latest_signal = max(signals, key=lambda x: x['created_at'])
+        
+        # Fetch take profits
+        tp_response = take_profits_table.scan(
+            FilterExpression='signal_id = :sid',
+            ExpressionAttributeValues={':sid': latest_signal['id']}
+        )
+        take_profits = [tp['price'] for tp in tp_response.get('Items', [])]
+        
         return {
-            'id': self.id,
-            'symbol': self.symbol,
-            'action': self.action,
-            'entry_price': self.entry_price,
-            'stop_loss': self.stop_loss,
-            'take_profits': json.loads(self.take_profits),
-            'volume': self.volume,
-            'status': self.status,
-            'created_at': self.created_at.isoformat(),
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+            'channel': latest_signal['channel'],
+            'symbol': latest_signal['symbol'],
+            'entry_price': latest_signal['entry_price'],
+            'action': latest_signal['action'],
+            'stop_loss': latest_signal['stop_loss'],
+            'take_profits': take_profits,
+            'created_at': latest_signal['created_at']
         }
+    except Exception as e:
+        logger.error(f"Error fetching latest signal: {str(e)}")
+        raise e
+
+def update_signal(channel_id, updates):
+    try:
+        response = signals_table.scan(
+            FilterExpression='channel = :cid',
+            ExpressionAttributeValues={':cid': channel_id}
+        )
+        signals = response.get('Items', [])
+        if not signals:
+            return False
+        
+        signal = signals[0]  # Take the first signal for this channel
+        signal_id = signal['id']
+        
+        update_expression = 'SET '
+        expression_attribute_values = {}
+        if 'symbol' in updates:
+            update_expression += 'symbol = :symbol, '
+            expression_attribute_values[':symbol'] = updates['symbol']
+        if 'entry_price' in updates:
+            update_expression += 'entry_price = :entry_price, '
+            expression_attribute_values[':entry_price'] = float(updates['entry_price'])
+        if 'action' in updates:
+            update_expression += 'action = :action, '
+            expression_attribute_values[':action'] = updates['action']
+        if 'stop_loss' in updates:
+            update_expression += 'stop_loss = :stop_loss, '
+            expression_attribute_values[':stop_loss'] = float(updates['stop_loss'])
+        update_expression += 'created_at = :created_at'
+        expression_attribute_values[':created_at'] = datetime.utcnow().isoformat()
+
+        signals_table.update_item(
+            Key={'id': signal_id},
+            UpdateExpression=update_expression,
+            ExpressionAttributeValues=expression_attribute_values
+        )
+
+        if 'take_profits' in updates:
+            # Delete existing take profits
+            tp_response = take_profits_table.scan(
+                FilterExpression='signal_id = :sid',
+                ExpressionAttributeValues={':sid': signal_id}
+            )
+            for tp in tp_response.get('Items', []):
+                take_profits_table.delete_item(Key={'id': tp['id']})
+            
+            # Add new take profits
+            for tp in updates['take_profits']:
+                tp_id = int(uuid.uuid4().int & (1<<31)-1)
+                take_profits_table.put_item(Item={
+                    'id': tp_id,
+                    'signal_id': signal_id,
+                    'price': float(tp)
+                })
+        
+        logger.info(f"Updated signal for channel {channel_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Error updating signal: {str(e)}")
+        return False
 
 # JWT Authentication Decorator
 def token_required(f):
@@ -257,215 +349,83 @@ def token_required(f):
         return f(*args, **kwargs)
     return decorated
 
-# Database Initialization
-def init_db():
-    db.create_all()
-    default_settings = [
-        ('allowedSymbols', 'EURUSD,GBPUSD,XAUUSD,USDJPY,US30'),
-        ('botEnabled', 'True'),
-        ('enableTrailingStop', 'True'),
-        ('maxDailyLoss', '3'),
-        ('maxTradesPerDay', '10'),
-        ('minimumRRR', '1.5'),
-        ('riskType', 'PERCENTAGE'),
-        ('riskValue', '1.5'),
-        ('tradingHoursStart', '08:00'),
-        ('tradingHoursEnd', '16:00')
-    ]
-    for key, value in default_settings:
-        if not Setting.query.filter_by(key=key).first():
-            db.session.add(Setting(key=key, value=value))
-    db.session.commit()
-    logger.info("Database initialized with default settings")
-
-def add_channels(channels):
-    try:
-        Channel.query.delete()
-        for channel in channels:
-            if not Channel.query.filter_by(channel_id=channel['id']).first():
-                db.session.add(Channel(channel_id=channel['id'], channel_name=channel['name'], is_active=False))
-        db.session.commit()
-        logger.info(f"Added {len(channels)} channels to the database")
-        return get_all_channels()
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"Failed to update channels: {str(e)}")
-        raise Exception(f"Failed to update channels: {str(e)}")
-
-def get_all_channels():
-    all_channels = Channel.query.all()
-    active_channels = [channel for channel in all_channels if channel.is_active]
-    logger.info(f"Retrieved {len(all_channels)} channels, {len(active_channels)} active")
-    return [{
-        'channel_id': channel.channel_id,
-        'channel_name': channel.channel_name,
-        'is_active': channel.is_active
-    } for channel in all_channels]
-
-def get_channels_is_active(active_only=True):
-    all_channels = Channel.query.all()
-    active_channels = [channel for channel in all_channels if channel.is_active == active_only]
-    return [channel.channel_id for channel in active_channels]
-
-def update_channel_status(channel_id, is_active):
-    channel = Channel.query.filter_by(channel_id=channel_id).first()
-    if channel:
-        channel.is_active = is_active
-        db.session.commit()
-        logger.info(f"Updated channel {channel_id} status to {is_active}")
-        return True
-    logger.warning(f"Channel {channel_id} not found for status update")
-    return False
-
-def get_current_settings():
-    settings = Setting.query.all()
-    settings_dict = {}
-    for setting in settings:
-        value = setting.value
-        if setting.key in ['botEnabled', 'enableTrailingStop']:
-            value = value.lower() == 'true'
-        elif setting.key in ['maxDailyLoss', 'maxTradesPerDay', 'minimumRRR', 'riskValue']:
-            value = float(value)
-        settings_dict[setting.key] = value
-    return settings_dict
-
-def validate_setting_value(key, value):
-    if key in ['botEnabled', 'enableTrailingStop']:
-        if not isinstance(value, bool):
-            raise ValueError(f"{key} must be a boolean")
-    elif key in ['maxDailyLoss', 'maxTradesPerDay', 'minimumRRR', 'riskValue']:
-        try:
-            float(value)
-        except ValueError:
-            raise ValueError(f"{key} must be a number")
-    elif key in ['tradingHoursStart', 'tradingHoursEnd']:
-        if not re.match(r'^\d{2}:\d{2}$', str(value)):
-            raise ValueError(f"{key} must be in HH:MM format")
-    return str(value)
-
-def update_setting(key, value):
-    setting = Setting.query.filter_by(key=key).first()
-    if setting:
-        validated_value = validate_setting_value(key, value)
-        setting.value = validated_value
-        db.session.commit()
-        logger.info(f"Updated setting {key} to {validated_value}")
-        return True
-    return False
-
-def create_signal(signal_data):
-    required_fields = ['symbol', 'entry_price', 'action', 'stop_loss']
-    for field in required_fields:
-        if field not in signal_data:
-            raise ValueError(f"Missing required field: {field}")
-    new_signal = Signal(
-        channel=int(1),  # Hardcoded for now; adjust as needed
-        symbol=signal_data['symbol'].upper(),
-        entry_price=float(signal_data['entry_price']),
-        action=signal_data['action'].upper(),
-        stop_loss=float(signal_data['stop_loss'])
-    )
-    db.session.add(new_signal)
-    db.session.flush()
-    if 'take_profits' in signal_data and isinstance(signal_data['take_profits'], list):
-        for tp in signal_data['take_profits']:
-            new_tp = TakeProfit(signal_id=new_signal.id, price=float(tp))
-            db.session.add(new_tp)
-    db.session.commit()
-    logger.info(f"Created new signal with ID {new_signal.id}")
-    return new_signal
-
-def get_latest_signal():
-    signal = Signal.query.order_by(Signal.created_at.desc()).first()
-    if signal:
-        return {
-            'channel': signal.channel,
-            'symbol': signal.symbol,
-            'entry_price': signal.entry_price,
-            'action': signal.action,
-            'stop_loss': signal.stop_loss,
-            'take_profits': [tp.price for tp in signal.take_profits],
-            'created_at': signal.created_at.isoformat()
-        }
-    return None
-
-def update_signal(channel_id, updates):
-    with app.app_context():  # Added Flask app context here
-        signal = Signal.query.filter_by(channel=channel_id).first()
-        if not signal:
-            return False
-        if 'symbol' in updates:
-            signal.symbol = updates['symbol']
-        if 'entry_price' in updates:
-            signal.entry_price = updates['entry_price']
-        if 'action' in updates:
-            signal.action = updates['action']
-        if 'stop_loss' in updates:
-            signal.stop_loss = updates['stop_loss']
-        signal.created_at = db.func.current_timestamp()
-        if 'take_profits' in updates:
-            TakeProfit.query.filter_by(signal_id=signal.id).delete()
-            for tp in updates['take_profits']:
-                new_tp = TakeProfit(signal_id=signal.id, price=tp)
-                db.session.add(new_tp)
-        db.session.commit()
-        logger.info(f"Updated signal for channel {channel_id}")
-        return True
-
 # API Routes
 @app.route("/api/register", methods=["POST"])
 def register_user():
     name = request.json["name"]
     email = request.json["email"]
     password = request.json["password"]
-    user_exists = User.query.filter_by(email=email).first() is not None
-    if user_exists:
-        logger.warning(f"Registration attempt with existing email: {email}")
-        return jsonify({"error": "User already exists"}), 409
-    hashed_password = bcrypt.generate_password_hash(password)
-    new_user = User(name=name, email=email, password=hashed_password)
-    db.session.add(new_user)
-    db.session.commit()
-    token = jwt.encode({
-        'user_id': new_user.id,
-        'exp': datetime.utcnow() + timedelta(hours=24)
-    }, SECRET_KEY, algorithm='HS256')
-    session['user_id'] = new_user.id  # Use dictionary access to avoid shadowing
-    logger.info(f"User registered: {email}")
-    return jsonify({
-        "user": {
-            "id": new_user.id,
-            "name": new_user.name,
-            "email": new_user.email,
-        },
-        "token": token
-    })
+    try:
+        response = users_table.scan(
+            FilterExpression='email = :email',
+            ExpressionAttributeValues={':email': email}
+        )
+        if response.get('Items', []):
+            logger.warning(f"Registration attempt with existing email: {email}")
+            return jsonify({"error": "User already exists"}), 409
+        
+        user_id = int(uuid.uuid4().int & (1<<31)-1)
+        hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
+        users_table.put_item(Item={
+            'id': user_id,
+            'name': name,
+            'email': email,
+            'password': hashed_password
+        })
+        
+        token = jwt.encode({
+            'user_id': user_id,
+            'exp': datetime.utcnow() + timedelta(hours=24)
+        }, SECRET_KEY, algorithm='HS256')
+        session['user_id'] = user_id
+        logger.info(f"User registered: {email}")
+        return jsonify({
+            "user": {
+                "id": user_id,
+                "name": name,
+                "email": email,
+            },
+            "token": token
+        })
+    except Exception as e:
+        logger.error(f"Error registering user: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/login", methods=["POST"])
 def login_user():
     email = request.json["email"]
     password = request.json["password"]
-    user = User.query.filter_by(email=email).first()
-    if user is None:
-        logger.warning(f"Login attempt with non-existent email: {email}")
-        return jsonify({"error": "Can not find user. Please sign up."}), 401
-    if not bcrypt.check_password_hash(user.password, password):
-        logger.warning(f"Invalid password for email: {email}")
-        return jsonify({"error": "Invalid email or password."}), 401
-    token = jwt.encode({
-        'user_id': user.id,
-        'exp': datetime.utcnow() + timedelta(hours=24)
-    }, SECRET_KEY, algorithm='HS256')
-    session['user_id'] = user.id
-    logger.info(f"User logged in: {email}")
-    return jsonify({
-        "user": {
-            "id": user.id,
-            "name": user.name,
-            "email": user.email,
-        },
-        "token": token
-    })
+    try:
+        response = users_table.scan(
+            FilterExpression='email = :email',
+            ExpressionAttributeValues={':email': email}
+        )
+        user = response.get('Items', [None])[0]
+        if not user:
+            logger.warning(f"Login attempt with non-existent email: {email}")
+            return jsonify({"error": "Can not find user. Please sign up."}), 401
+        
+        if not bcrypt.check_password_hash(user['password'], password):
+            logger.warning(f"Invalid password for email: {email}")
+            return jsonify({"error": "Invalid email or password."}), 401
+        
+        token = jwt.encode({
+            'user_id': user['id'],
+            'exp': datetime.utcnow() + timedelta(hours=24)
+        }, SECRET_KEY, algorithm='HS256')
+        session['user_id'] = user['id']
+        logger.info(f"User logged in: {email}")
+        return jsonify({
+            "user": {
+                "id": user['id'],
+                "name": user['name'],
+                "email": user['email'],
+            },
+            "token": token
+        })
+    except Exception as e:
+        logger.error(f"Error logging in user: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/logout", methods=["POST"])
 def logout_user():
@@ -483,13 +443,17 @@ def get_current_user():
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
         user_id = payload['user_id']
-        user = User.query.filter_by(id=user_id).first()
-        logger.info(f"Current user retrieved: {user.email}")
+        response = users_table.get_item(Key={'id': user_id})
+        user = response.get('Item')
+        if not user:
+            logger.warning(f"User not found for ID: {user_id}")
+            return jsonify({"error": "User not found"}), 404
+        logger.info(f"Current user retrieved: {user['email']}")
         return jsonify({
             "user": {
-                "id": user.id,
-                "name": user.name,
-                "email": user.email,
+                "id": user['id'],
+                "name": user['name'],
+                "email": user['email'],
             },
             "token": token
         })
@@ -572,9 +536,7 @@ def update_settings():
             return jsonify({'status': 'error', 'message': 'Invalid data format'}), 400
         for key, value in data.items():
             if not update_setting(key, value):
-                new_setting = Setting(key=key, value=str(value))
-                db.session.add(new_setting)
-        db.session.commit()
+                settings_table.put_item(Item={'key': key, 'value': str(value)})
         current_settings = get_current_settings()
         return jsonify({
             'status': 'success',
@@ -582,7 +544,6 @@ def update_settings():
             'settings': current_settings
         })
     except Exception as e:
-        db.session.rollback()
         logger.error(f"Error in update_settings: {str(e)}")
         return jsonify({
             'status': 'error',
@@ -604,17 +565,15 @@ def add_signal():
         return jsonify({
             'status': 'success',
             'message': 'Signal created',
-            'signal_id': signal.id
+            'signal_id': signal['id']
         }), 201
     except ValueError as e:
-        db.session.rollback()
         logger.error(f"ValueError in add_signal: {str(e)}")
         return jsonify({
             'status': 'error',
             'message': str(e)
         }), 400
     except Exception as e:
-        db.session.rollback()
         logger.error(f"Error in add_signal: {str(e)}")
         return jsonify({
             'status': 'error',
@@ -640,7 +599,7 @@ def get_signal():
         logger.error(f"Error in get_signal: {str(e)}")
         return jsonify({
             'status': 'error',
-            'message': str(e)
+            'message': str(e. __str__())
         }), 500
 
 @app.route('/api/signal/history', methods=['GET'])
@@ -651,30 +610,60 @@ def get_signal_history():
         symbol = request.args.get('symbol')
         action = request.args.get('action')
         channel_id = request.args.get('channel')
-        query = Signal.query
+
+        # Scan signals with filters
+        filter_expression = []
+        expression_attribute_values = {}
         if symbol:
-            query = query.filter(Signal.symbol == symbol.upper())
+            filter_expression.append('symbol = :symbol')
+            expression_attribute_values[':symbol'] = symbol.upper()
         if action:
-            query = query.filter(Signal.action == action.upper())
+            filter_expression.append('action = :action')
+            expression_attribute_values[':action'] = action.upper()
         if channel_id:
-            query = query.filter(Signal.channel == int(channel_id))
-        signals = query.order_by(Signal.created_at.desc()).paginate(page=page, per_page=per_page, error_out=False)
-        signal_list = [{
-            'id': signal.id,
-            'channel': signal.channel,
-            'symbol': signal.symbol,
-            'action': signal.action,
-            'entry_price': signal.entry_price,
-            'stop_loss': signal.stop_loss,
-            'take_profits': [tp.price for tp in signal.take_profits],
-            'created_at': signal.created_at.isoformat()
-        } for signal in signals.items]
+            filter_expression.append('channel = :channel')
+            expression_attribute_values[':channel'] = int(channel_id)
+
+        scan_kwargs = {}
+        if filter_expression:
+            scan_kwargs['FilterExpression'] = ' AND '.join(filter_expression)
+            scan_kwargs['ExpressionAttributeValues'] = expression_attribute_values
+
+        response = signals_table.scan(**scan_kwargs)
+        signals = response.get('Items', [])
+        signals.sort(key=lambda x: x['created_at'], reverse=True)
+
+        # Pagination
+        total = len(signals)
+        start = (page - 1) * per_page
+        end = start + per_page
+        paginated_signals = signals[start:end]
+
+        # Fetch take profits for each signal
+        signal_list = []
+        for signal in paginated_signals:
+            tp_response = take_profits_table.scan(
+                FilterExpression='signal_id = :sid',
+                ExpressionAttributeValues={':sid': signal['id']}
+            )
+            take_profits = [tp['price'] for tp in tp_response.get('Items', [])]
+            signal_list.append({
+                'id': signal['id'],
+                'channel': signal['channel'],
+                'symbol': signal['symbol'],
+                'action': signal['action'],
+                'entry_price': signal['entry_price'],
+                'stop_loss': signal['stop_loss'],
+                'take_profits': take_profits,
+                'created_at': signal['created_at']
+            })
+
         return jsonify({
             'status': 'success',
             'signals': signal_list,
-            'total': signals.total,
-            'pages': signals.pages,
-            'current_page': signals.page
+            'total': total,
+            'pages': (total + per_page - 1) // per_page,
+            'current_page': page
         })
     except Exception as e:
         logger.error(f"Error in get_signal_history: {str(e)}")
@@ -686,18 +675,34 @@ def get_signal_history():
 @app.route('/api/signal/<int:channel_id>', methods=['GET'])
 def get_channel_by_id(channel_id):
     try:
-        signal = Signal.query.filter_by(channel=channel_id).first()
+        response = signals_table.scan(
+            FilterExpression='channel = :cid',
+            ExpressionAttributeValues={':cid': channel_id}
+        )
+        signal = response.get('Items', [None])[0]
+        if not signal:
+            return jsonify({
+                'status': 'error',
+                'message': 'Signal not found'
+            }), 404
+
+        tp_response = take_profits_table.scan(
+            FilterExpression='signal_id = :sid',
+            ExpressionAttributeValues={':sid': signal['id']}
+        )
+        take_profits = [tp['price'] for tp in tp_response.get('Items', [])]
+
         return jsonify({
             'status': 'success',
             'signal': {
-                'id': signal.id,
-                'channel': signal.channel,
-                'symbol': signal.symbol,
-                'action': signal.action,
-                'entry_price': signal.entry_price,
-                'stop_loss': signal.stop_loss,
-                'take_profits': [tp.price for tp in signal.take_profits],
-                'created_at': signal.created_at.isoformat()
+                'id': signal['id'],
+                'channel': signal['channel'],
+                'symbol': signal['symbol'],
+                'action': signal['action'],
+                'entry_price': signal['entry_price'],
+                'stop_loss': signal['stop_loss'],
+                'take_profits': take_profits,
+                'created_at': signal['created_at']
             }
         })
     except Exception as e:
@@ -705,7 +710,7 @@ def get_channel_by_id(channel_id):
         return jsonify({
             'status': 'error',
             'message': str(e)
-        }), 404 if isinstance(e, sqlalchemy.orm.exc.NoResultFound) else 500
+        }), 500
 
 @app.route('/api/signal/<int:channel_id>', methods=['PUT', 'PATCH'])
 def update_signal_endpoint(channel_id):
@@ -724,18 +729,27 @@ def update_signal_endpoint(channel_id):
                 'message': 'Action must be either BUY or SELL'
             }), 400
         if update_signal(channel_id, data):
-            signal = Signal.query.filter_by(channel=channel_id).first()
+            response = signals_table.scan(
+                FilterExpression='channel = :cid',
+                ExpressionAttributeValues={':cid': channel_id}
+            )
+            signal = response.get('Items', [None])[0]
+            tp_response = take_profits_table.scan(
+                FilterExpression='signal_id = :sid',
+                ExpressionAttributeValues={':sid': signal['id']}
+            )
+            take_profits = [tp['price'] for tp in tp_response.get('Items', [])]
             return jsonify({
                 'status': 'success',
                 'message': 'Signal updated',
                 'signal': {
-                    'id': signal.id,
-                    'symbol': signal.symbol,
-                    'action': signal.action,
-                    'entry_price': signal.entry_price,
-                    'stop_loss': signal.stop_loss,
-                    'take_profits': [tp.price for tp in signal.take_profits],
-                    'created_at': signal.created_at.isoformat()
+                    'id': signal['id'],
+                    'symbol': signal['symbol'],
+                    'action': signal['action'],
+                    'entry_price': signal['entry_price'],
+                    'stop_loss': signal['stop_loss'],
+                    'take_profits': take_profits,
+                    'created_at': signal['created_at']
                 }
             })
         return jsonify({
@@ -743,7 +757,6 @@ def update_signal_endpoint(channel_id):
             'message': 'Signal not found'
         }), 404
     except Exception as e:
-        db.session.rollback()
         logger.error(f"Error in update_signal_endpoint: {str(e)}")
         return jsonify({
             'status': 'error',
@@ -766,9 +779,7 @@ def update_signal_setting(key):
                 'value': value
             })
         else:
-            new_setting = Setting(key=key, value=str(value))
-            db.session.add(new_setting)
-            db.session.commit()
+            settings_table.put_item(Item={'key': key, 'value': str(value)})
             return jsonify({
                 'status': 'success',
                 'message': f'New setting {key} created',
@@ -776,14 +787,12 @@ def update_signal_setting(key):
                 'value': value
             })
     except Exception as e:
-        db.session.rollback()
         logger.error(f"Error in update_signal_setting: {str(e)}")
         return jsonify({
             'status': 'error',
             'message': f'Failed to update setting: {str(e)}'
         }), 500
 
-# Function to parse trading signals using GPT-4o
 def parse_trading_signal(signal_text: str) -> dict:
     system_prompt = """Extract trading signal details from the given text and return as JSON with the following structure:
     {
@@ -795,29 +804,20 @@ def parse_trading_signal(signal_text: str) -> dict:
     }
     Handle variations in formatting and extract partial information when possible."""
     
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            # Introduce a small random delay to avoid hitting the rate limit
-            time.sleep(2 + random.uniform(0, 1))  # Random jitter
-
-            # OpenAI API call
-            response = openai_Client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": signal_text}
-                ]
-            )
-            print(response.choices[0].message.content)
-            
-            # Log the raw response from OpenAI
-            logger.info(f"OpenAI response: {response.choices[0].message.content}")
-            parsed = json.loads(response.choices[0].message.content)
-            parsed['take_profits'] = parsed.get('take_profits', []) if parsed.get('take_profits') is not None else []
-            return parsed
-        except Exception as e:
-            return {"error": str(e)}
+    try:
+        response = openai_Client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": signal_text}
+            ]
+        )
+        logger.info(f"OpenAI response: {response.choices[0].message.content}")
+        parsed = json.loads(response.choices[0].message.content)
+        parsed['take_profits'] = parsed.get('take_profits', []) if parsed.get('take_profits') is not None else []
+        return parsed
+    except Exception as e:
+        return {"error": str(e)}
 
 async def fetch_subscribed_channels():
     async with TelegramClient('session', API_ID, API_HASH) as telegram_Client:
@@ -832,7 +832,6 @@ async def fetch_subscribed_channels():
             for dialog in dialogs if dialog.is_channel
         ]
 
-# API endpoint to start monitoring a channel
 @app.route('/api/monitor', methods=['POST'])
 @token_required
 def monitor_channel():
@@ -844,7 +843,6 @@ def monitor_channel():
         channels = [int(x) for x in data.get("channel_id")]
         logger.info(f"Monitoring channel: {channels}")
         
-        # Start monitoring in a separate thread
         thread = Thread(target=start_monitoring, args=(channels,))
         thread.daemon = True
         thread.start()
@@ -854,7 +852,6 @@ def monitor_channel():
         logger.error(f"Error in monitor_channel: {str(e)}")
         return jsonify({"status": "error", "message": f"Failed to start monitoring: {str(e)}"}), 500
 
-# Function to start monitoring a channel
 def start_monitoring(channels):
     async def monitor(channels):
         logger.info(f"Starting monitoring for channels: {channels}")
@@ -876,23 +873,21 @@ def start_monitoring(channels):
                         global signalStatus
                         signalStatus = SignalStatus.UPDATED
                         parsed_signal = parse_trading_signal(message_text)
-                        update_signal(1, parsed_signal)  # Update signal in DB
+                        update_signal(1, parsed_signal)
                         logger.info(f"Received signal from channel {channel_id}: {parsed_signal}")
-                        socketio.emit('new_signal', parsed_signal)  # Emit to frontend
+                        socketio.emit('new_signal', parsed_signal)
 
-                # Keep the client running indefinitely with reconnection handling
                 while True:
                     try:
                         await telegram_Client.run_until_disconnected()
                         logger.info("Telegram client disconnected; attempting to reconnect...")
                     except Exception as e:
                         logger.error(f"Telegram client error: {str(e)}")
-                    await asyncio.sleep(5)  # Wait before reconnecting
+                    await asyncio.sleep(5)
 
         except Exception as e:
             logger.error(f"Monitoring setup failed: {str(e)}")
 
-    # Use a single, persistent event loop in the thread
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
@@ -905,7 +900,6 @@ def start_monitoring(channels):
 is_first = True
 
 @app.route('/mt/accountinfo', methods=['POST'])
-#@token_required
 def mt_account():
     data = request.json
     if data['activeTrades'] is None:
@@ -945,20 +939,38 @@ def mt_account():
 @app.route('/mt/get_trade', methods=['GET'])
 def get_trade():
     try:
-        # Fetch the oldest pending trade
-        trade = Trade.query.filter_by(status='pending').order_by(Trade.created_at.asc()).first()
-        if trade:
-            trade.status = 'sent'  # Mark as sent to MT5
-            db.session.commit()
-            trade_dict = trade.to_dict()
-            logger.info(f"Sending trade to MT5: {trade_dict}")
-            return jsonify(trade_dict)
-        logger.debug("No pending trades found")
-        return jsonify({})
+        response = trades_table.scan(
+            FilterExpression='status = :status',
+            ExpressionAttributeValues={':status': 'pending'}
+        )
+        trades = response.get('Items', [])
+        if not trades:
+            logger.debug("No pending trades found")
+            return jsonify({})
+
+        trade = min(trades, key=lambda x: x['created_at'])
+        trades_table.update_item(
+            Key={'id': trade['id']},
+            UpdateExpression='SET status = :status',
+            ExpressionAttributeValues={':status': 'sent'}
+        )
+        trade_dict = {
+            'id': trade['id'],
+            'symbol': trade['symbol'],
+            'action': trade['action'],
+            'entry_price': trade['entry_price'],
+            'stop_loss': trade['stop_loss'],
+            'take_profits': json.loads(trade['take_profits']),
+            'volume': trade['volume'],
+            'status': 'sent',
+            'created_at': trade['created_at'],
+            'updated_at': trade.get('updated_at')
+        }
+        logger.info(f"Sending trade to MT5: {trade_dict}")
+        return jsonify(trade_dict)
     except Exception as e:
         logger.error(f"Error fetching trade: {str(e)}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
-
 
 @app.route('/api/trade', methods=['POST'])
 @token_required
@@ -966,43 +978,49 @@ def execute_trade():
     trade_data = request.json
     logger.info(f"Received trade request: {trade_data}")
     try:
-        # Validate required fields
         required_fields = ['symbol', 'action', 'entry_price', 'stop_loss', 'take_profits', 'volume']
         for field in required_fields:
             if field not in trade_data:
                 logger.error(f"Missing required field in trade: {field}")
                 return jsonify({'status': 'error', 'message': f'Missing required field: {field}'}), 400
 
-        # Create new Trade record
-        new_trade = Trade(
-            symbol=trade_data['symbol'].upper(),
-            action=trade_data['action'].upper(),
-            entry_price=float(trade_data['entry_price']),
-            stop_loss=float(trade_data['stop_loss']),
-            take_profits=json.dumps(trade_data['take_profits']),
-            volume=float(trade_data['volume']),
-            status='pending'
-        )
-        db.session.add(new_trade)
-        db.session.commit()
-        logger.info(f"Trade queued in database with ID: {new_trade.id}")
+        trade_id = int(uuid.uuid4().int & (1<<31)-1)
+        created_at = datetime.utcnow().isoformat()
+        new_trade = {
+            'id': trade_id,
+            'symbol': trade_data['symbol'].upper(),
+            'action': trade_data['action'].upper(),
+            'entry_price': float(trade_data['entry_price']),
+            'stop_loss': float(trade_data['stop_loss']),
+            'take_profits': json.dumps(trade_data['take_profits']),
+            'volume': float(trade_data['volume']),
+            'status': 'pending',
+            'created_at': created_at
+        }
+        trades_table.put_item(Item=new_trade)
+        logger.info(f"Trade queued in database with ID: {trade_id}")
         
-        socketio.emit('trade_signal', new_trade.to_dict())  # Notify frontend
-        return jsonify({'status': 'Trade queued for MT5', 'trade_id': new_trade.id, 'trade': new_trade.to_dict()})
+        trade_dict = {
+            'id': trade_id,
+            'symbol': new_trade['symbol'],
+            'action': new_trade['action'],
+            'entry_price': new_trade['entry_price'],
+            'stop_loss': new_trade['stop_loss'],
+            'take_profits': trade_data['take_profits'],
+            'volume': new_trade['volume'],
+            'status': new_trade['status'],
+            'created_at': new_trade['created_at'],
+            'updated_at': new_trade.get('updated_at')
+        }
+        socketio.emit('trade_signal', trade_dict)
+        return jsonify({'status': 'Trade queued for MT5', 'trade_id': trade_id, 'trade': trade_dict})
     except Exception as e:
-        db.session.rollback()
         logger.error(f"Failed to queue trade: {str(e)}")
         return jsonify({'status': 'error', 'message': f'Failed to queue trade: {str(e)}'}), 500
 
-# Near your other routes in app.py
-@app.route('/mt/ngrok_url', methods=['GET'])
-def get_ngrok_url():
-    return jsonify({"status": "success", "ngrok_url": NGROK_PUBLIC_URL}), 200
-
 if __name__ == '__main__':
     try:
-        with app.app_context():
-            init_db()
+        init_db()
         logger.info("Starting Flask-SocketIO server on http://0.0.0.0:5000")
         socketio.run(app, host="0.0.0.0", port=5000, debug=True)
     except Exception as e:

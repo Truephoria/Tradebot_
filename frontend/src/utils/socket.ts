@@ -8,7 +8,7 @@ export const initializeSocket = () => {
     return;
   }
 
-  socket = io("http://localhost:5000");
+  socket = io(process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000");
 
   socket.on("connect_error", (error) => {
     console.error("Connection error:", error);
