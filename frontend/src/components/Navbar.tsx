@@ -3,7 +3,7 @@
 import { usePathname } from 'next/navigation';
 import React from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+//Simport { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { ThemeSwitcher } from './ThemeSwitcher';
 import { LogOut } from 'lucide-react';
@@ -15,7 +15,7 @@ interface NavbarProps {
 }
 
 const Navbar: React.FC<NavbarProps> = ({ className }) => {
-  const router = useRouter();
+  //const router = useRouter();
   const currentPath = usePathname();
   const { user, logout, isAuthenticated } = useAuth();
 
