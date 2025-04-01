@@ -5,5 +5,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 ENV PYTHONUNBUFFERED=1
 EXPOSE 5000
-COPY session.session /app/session.session
 CMD ["python", "app.py"]
