@@ -1,11 +1,9 @@
 version: 1.0
 runtime: python311  # Optional since the Dockerfile specifies the base image
-source:
-  directory: backend  # Source directory where your Dockerfile and app files are located
 build:
   dockerfile: Dockerfile  # Path to the Dockerfile relative to the source directory
 port: 5000  # Matches EXPOSE 5000 in your Dockerfile
-start:
+run:
   command: python app.py  # Optional since the Dockerfile specifies CMD ["python", "app.py"]
 env:
   - name: PYTHONUNBUFFERED
