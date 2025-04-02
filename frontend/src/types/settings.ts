@@ -11,7 +11,10 @@ export type SettingsType = {
   riskValue: number;
   tradingHoursEnd: string;
   tradingHoursStart: string;
-  
+  // Telegram settings
+  apiId: number; // API_ID as an integer
+  apiHash: number; // API_HASH as an integer
+  phoneNumber: number; // PHONE_NUMBER as an integer
 };
 
 export type SettingsStateType = {
@@ -23,5 +26,6 @@ export type SettingsStateType = {
 export type SettingsAction = {
   getSettings: () => Promise<void>;
   updateSettings: (settings: Partial<SettingsType>) => Promise<void>;
- 
+  getTelegramSettings: () => Promise<void>;
+  updateTelegramSettings: (settings: Partial<Pick<SettingsType, 'apiId' | 'apiHash' | 'phoneNumber'>>) => Promise<void>;
 };
