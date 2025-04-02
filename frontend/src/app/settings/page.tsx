@@ -12,7 +12,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DollarSign, Lock, Shield } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -28,6 +27,7 @@ import {
   FormField,
   FormItem,
   FormLabel,
+  FormMessage,
 } from '@/components/ui/form';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -69,17 +69,16 @@ const defaultSettings = {
 };
 
 /* -------------------------------------
-   NEW: Authentication-related schema
+   Authentication-related schema
 -------------------------------------- */
 const authFormSchema = z.object({
-  apiId: z.coerce.number({ invalid_type_error: 'Must be a number' }),
+  apiId: z.string().min(1, 'API_ID is required'),
   apiHash: z.string().min(1, 'API_HASH is required'),
   phoneNumber: z.string().min(1, 'PHONE_NUMBER is required'),
 });
 
-// Example defaults for authentication form
 const defaultAuthSettings = {
-  apiId: 0,
+  apiId: '',
   apiHash: '',
   phoneNumber: '',
 };
@@ -87,8 +86,10 @@ const defaultAuthSettings = {
 const SettingsPage: React.FC = () => {
   const socket = useRef<Socket | null>(null);
   const setSignalState = useSignalStore((state) => state.setSignal);
-  const { settings, getSettings, updateSettings } = useSettingStore();
-  const [isEditing, setIsEditing] = useState(false); // Track editing state
+  const { settings, getSettings, updateSettings, getTelegramSettings, updateTelegramSettings } = useSettingStore();
+  const [isEditing, setIsEditing] = useState(false); // Track editing state for risk/trading form
+  const [isEditingAuth, setIsEditingAuth] = useState(false); // Track editing state for auth form
+  const [isInitialLoad, setIsInitialLoad] = useState(true); // Track initial load to prevent resetting
 
   // Form 1: Risk/Trading settings
   const form = useForm<z.infer<typeof formSchema>>({
@@ -103,21 +104,35 @@ const SettingsPage: React.FC = () => {
   });
 
   useEffect(() => {
-    // Fetch your existing settings from the store (and possibly auth fields too)
-    getSettings()
+    // Fetch both risk/trading and Telegram settings on initial load
+    Promise.all([getSettings(), getTelegramSettings()])
       .then(() => {
-        form.reset(settings || defaultSettings);
-        // If your store returns authentication fields, reset them too, e.g.:
-        // authForm.reset({
-        //   apiId: settings?.apiId ?? 12345,
-        //   apiHash: settings?.apiHash ?? "",
-        //   phoneNumber: settings?.phoneNumber ?? ""
-        // });
+        // Reset risk/trading form
+        form.reset({
+          riskType: settings.riskType || defaultSettings.riskType,
+          riskValue: settings.riskValue || defaultSettings.riskValue,
+          maxDailyLoss: settings.maxDailyLoss || defaultSettings.maxDailyLoss,
+          minimumRRR: settings.minimumRRR || defaultSettings.minimumRRR,
+          enableTrailingStop: settings.enableTrailingStop ?? defaultSettings.enableTrailingStop,
+          tradingHoursStart: settings.tradingHoursStart || defaultSettings.tradingHoursStart,
+          tradingHoursEnd: settings.tradingHoursEnd || defaultSettings.tradingHoursEnd,
+          maxTradesPerDay: settings.maxTradesPerDay || defaultSettings.maxTradesPerDay,
+          allowedSymbols: settings.allowedSymbols || defaultSettings.allowedSymbols,
+          botEnabled: settings.botEnabled ?? defaultSettings.botEnabled,
+        });
+        // Reset Telegram auth form
+        authForm.reset({
+          apiId: settings.apiId || defaultAuthSettings.apiId,
+          apiHash: settings.apiHash || defaultAuthSettings.apiHash,
+          phoneNumber: settings.phoneNumber || defaultAuthSettings.phoneNumber,
+        });
+        setIsInitialLoad(false); // Mark initial load as complete
       })
       .catch((err) => {
         console.error('Failed to fetch settings:', err);
         form.reset(defaultSettings);
         authForm.reset(defaultAuthSettings);
+        setIsInitialLoad(false);
       });
 
     // Socket init
@@ -136,16 +151,35 @@ const SettingsPage: React.FC = () => {
     return () => {
       currentSocket.off('new_signal');
     };
-  }, []);
+  }, [form, authForm, getSettings, getTelegramSettings, setSignalState]);
 
-  // Re-sync form if settings update outside editing
+  // Re-sync form only if not editing and after initial load
   useEffect(() => {
+    if (isInitialLoad) return; // Skip during initial load
     if (!isEditing && settings) {
-      form.reset(settings);
+      form.reset({
+        riskType: settings.riskType || defaultSettings.riskType,
+        riskValue: settings.riskValue || defaultSettings.riskValue,
+        maxDailyLoss: settings.maxDailyLoss || defaultSettings.maxDailyLoss,
+        minimumRRR: settings.minimumRRR || defaultSettings.minimumRRR,
+        enableTrailingStop: settings.enableTrailingStop ?? defaultSettings.enableTrailingStop,
+        tradingHoursStart: settings.tradingHoursStart || defaultSettings.tradingHoursStart,
+        tradingHoursEnd: settings.tradingHoursEnd || defaultSettings.tradingHoursEnd,
+        maxTradesPerDay: settings.maxTradesPerDay || defaultSettings.maxTradesPerDay,
+        allowedSymbols: settings.allowedSymbols || defaultSettings.allowedSymbols,
+        botEnabled: settings.botEnabled ?? defaultSettings.botEnabled,
+      });
     }
-  }, [settings, isEditing]);
+    if (!isEditingAuth && settings) {
+      authForm.reset({
+        apiId: settings.apiId || defaultAuthSettings.apiId,
+        apiHash: settings.apiHash || defaultAuthSettings.apiHash,
+        phoneNumber: settings.phoneNumber || defaultAuthSettings.phoneNumber,
+      });
+    }
+  }, [settings, isEditing, isEditingAuth, form, authForm, isInitialLoad]);
 
-  // Main form submit
+  // Main form submit (risk/trading settings)
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
     try {
       await updateSettings(values);
@@ -157,34 +191,12 @@ const SettingsPage: React.FC = () => {
     }
   };
 
-  // Auth form submit (SENDS the credentials to your server endpoint)
+  // Auth form submit (Telegram settings)
   const onAuthSubmit = async (values: z.infer<typeof authFormSchema>) => {
     try {
-      console.log('button clicked');
-
-      // In a real app, userId might come from your auth context, NextAuth, localStorage, etc.
-      // For now, let's just use a placeholder. Replace "123" with how you actually get the user ID.
-      const userId = "123";
-
-      const payload = {
-        user_id: userId,
-        ...values,
-      };
-
-      const response = await fetch('/api/telegram/auth_settings', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        const msg = await response.text();
-        throw new Error(msg || 'Failed to save credentials');
-      }
-
+      await updateTelegramSettings(values);
       toast.success('Authentication credentials saved');
+      setIsEditingAuth(false);
     } catch (error) {
       console.error('Error updating credentials:', error);
       toast.error('Error updating credentials');
@@ -194,6 +206,12 @@ const SettingsPage: React.FC = () => {
   const handleFormChange = () => {
     if (!isEditing) {
       setIsEditing(true);
+    }
+  };
+
+  const handleAuthFormChange = () => {
+    if (!isEditingAuth) {
+      setIsEditingAuth(true);
     }
   };
 
@@ -253,10 +271,6 @@ const SettingsPage: React.FC = () => {
                                   )}
                                 </SelectTrigger>
                               </FormControl>
-                              {/* 
-                                  Updated classes for z-index and optional blur
-                                  You can remove backdrop-blur-sm if you only want the z-index fix
-                               */}
                               <SelectContent
                                 position="popper"
                                 className="z-50 backdrop-blur-sm bg-white/80"
@@ -483,6 +497,7 @@ const SettingsPage: React.FC = () => {
                 <Form {...authForm}>
                   <form
                     onSubmit={authForm.handleSubmit(onAuthSubmit)}
+                    onChange={handleAuthFormChange}
                     className="space-y-4"
                   >
                     <FormField
@@ -493,11 +508,12 @@ const SettingsPage: React.FC = () => {
                           <FormLabel>API_ID</FormLabel>
                           <FormControl>
                             <Input
-                              type="number"
+                              type="text"
                               placeholder="Your Telegram API ID"
                               {...field}
                             />
                           </FormControl>
+                          <FormMessage />
                         </FormItem>
                       )}
                     />
@@ -510,10 +526,12 @@ const SettingsPage: React.FC = () => {
                           <FormLabel>API_HASH</FormLabel>
                           <FormControl>
                             <Input
+                              type="text"
                               placeholder="Your Telegram API Hash"
                               {...field}
                             />
                           </FormControl>
+                          <FormMessage />
                         </FormItem>
                       )}
                     />
@@ -523,19 +541,36 @@ const SettingsPage: React.FC = () => {
                       name="phoneNumber"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>PHONE_NUMBER</FormLabel>
+                          <FormLabel>Phone Number</FormLabel>
                           <FormControl>
                             <Input
-                              placeholder="Your phone number (e.g. +15551234567)"
+                              type="text"
+                              placeholder="Your phone number (e.g., +15551234567)"
                               {...field}
                             />
                           </FormControl>
+                          <FormDescription>
+                            Enter your phone number with the country code (e.g., +1 for the US).
+                          </FormDescription>
+                          <FormMessage />
                         </FormItem>
                       )}
                     />
 
-                    <div className="flex justify-end">
-                      <Button type="submit">Save Authentication</Button>
+                    <div className="flex justify-end space-x-4">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          authForm.reset(settings || defaultAuthSettings);
+                          setIsEditingAuth(false);
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button type="submit" disabled={!isEditingAuth}>
+                        Save Authentication
+                      </Button>
                     </div>
                   </form>
                 </Form>
