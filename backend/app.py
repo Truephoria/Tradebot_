@@ -50,9 +50,8 @@ socketio = SocketIO(
 app.config["SESSION_TYPE"] = "filesystem"
 app.config["SESSION_PERMANENT"] = True
 app.config["PERMANENT_SESSION_LIFETIME"] = 3600
-app.config['SECRET_KEY'] = os.getenv("SECRET_KEY")
-app.config['SESSION_COOKIE_SAMESITE'] = 'None'
-app.config['SESSION_COOKIE_SECURE'] = True
+#app.config['SESSION_COOKIE_SAMESITE'] = 'None'
+#app.config['SESSION_COOKIE_SECURE'] = True
 
 # Initialize flask-session
 session_handler = Session(app)
@@ -74,6 +73,8 @@ trades_table = dynamodb.Table('Trades')
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 PHONE_NUMBER = os.getenv("PHONE_NUMBER")
+
+#JWT
 SECRET_KEY = os.getenv("SECRET_KEY")
 
 # Enums for status tracking
