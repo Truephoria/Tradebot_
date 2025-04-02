@@ -2,7 +2,7 @@
 import axios from "axios";
 
 const axiosServices = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000",
+  baseURL: "https://pkbk36mqmi.us-east-2.awsapprunner.com",
   timeout: 5000,
   withCredentials: true, // ⬅️ Needed for cookies/sessions with Flask
 });

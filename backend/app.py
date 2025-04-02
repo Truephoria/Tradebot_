@@ -35,10 +35,16 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # Configure CORS explicitly for API routes
-CORS(app, resources={r"/api/*": {"origins": "https://main.d1bpy75hw1zntc.amplifyapp.com/"}}, supports_credentials=True)
+CORS(app,
+     origins=["https://main.d1bpy75hw1zntc.amplifyapp.com"],
+     supports_credentials=True)
 
 # Configure SocketIO with CORS
-socketio = SocketIO(app, cors_allowed_origins="https://main.d1bpy75hw1zntc.amplifyapp.com/")
+socketio = SocketIO(
+    app,
+    cors_allowed_origins=["https://main.d1bpy75hw1zntc.amplifyapp.com"],
+    async_mode="eventlet"
+)
 
 # Configure flask-session to use filesystem (since we're removing SQLAlchemy)
 app.config["SESSION_TYPE"] = "filesystem"
