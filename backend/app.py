@@ -375,12 +375,19 @@ def token_required(f):
 # -----------------------------------------------------------------------------
 # API Routes
 # -----------------------------------------------------------------------------
+
 @app.route("/api/register", methods=["POST"])
 def register_user():
+    """
+    Creates a new user account.
+    - Returns user (id, name, email) + JWT token.
+    - user_id is an int, so it won't cause the Decimal problem in the response.
+    """
     name = request.json["name"]
     email = request.json["email"]
     password = request.json["password"]
     try:
+        # Check if user already exists
         response = users_table.scan(
             FilterExpression='email = :email',
             ExpressionAttributeValues={':email': email}
@@ -389,8 +396,10 @@ def register_user():
             logger.warning(f"Registration attempt with existing email: {email}")
             return jsonify({"error": "User already exists"}), 409
 
+        # Generate an integer user_id
         user_id = int(uuid.uuid4().int & (1 << 31) - 1)
         hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
+
         users_table.put_item(Item={
             'id': user_id,
             'name': name,
@@ -406,9 +415,9 @@ def register_user():
         logger.info(f"User registered: {email}")
         return jsonify({
             "user": {
-                "id": user_id,
+                "id": user_id,       # already int
                 "name": name,
-                "email": email,
+                "email": email
             },
             "token": token
         })
@@ -418,9 +427,15 @@ def register_user():
 
 @app.route("/api/login", methods=["POST"])
 def login_user():
+    """
+    Logs in an existing user.
+    - Must convert user['id'] from Decimal to int before returning JSON.
+    - Must not return hashed password in response.
+    """
     email = request.json["email"]
     password = request.json["password"]
     try:
+        # Find user by email
         response = users_table.scan(
             FilterExpression='email = :email',
             ExpressionAttributeValues={':email': email}
@@ -430,21 +445,29 @@ def login_user():
             logger.warning(f"Login attempt with non-existent email: {email}")
             return jsonify({"error": "Can not find user. Please sign up."}), 401
 
+        # Check bcrypt password
         if not bcrypt.check_password_hash(user['password'], password):
             logger.warning(f"Invalid password for email: {email}")
             return jsonify({"error": "Invalid email or password."}), 401
 
+        # Convert user['id'] from Decimal to int if necessary
+        # Some items might store as Decimal in DynamoDB
+        user_id = int(user['id']) if 'id' in user else None
+        user_name = user.get('name', '')
+        user_email = user['email']
+
         token = jwt.encode({
-            'user_id': user['id'],
+            'user_id': user_id,
             'exp': datetime.utcnow() + timedelta(hours=24)
         }, SECRET_KEY, algorithm='HS256')
 
         logger.info(f"User logged in: {email}")
+        # Return user fields except password
         return jsonify({
             "user": {
-                "id": user['id'],
-                "name": user['name'],
-                "email": user['email'],
+                "id": user_id,
+                "name": user_name,
+                "email": user_email
             },
             "token": token
         })
@@ -452,24 +475,34 @@ def login_user():
         logger.error(f"Error logging in user: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-# (Optional) The /logout route is no longer needed for JWT auth,
-# so it’s removed to avoid confusion.
-
 @app.route("/api/@me")
 @token_required
 def get_current_user():
+    """
+    Returns the currently authenticated user's info,
+    with 'id' converted from Decimal to int if necessary,
+    and omitting the password field.
+    """
     user_id = g.user_id
     response = users_table.get_item(Key={'id': user_id})
     user = response.get('Item')
     if not user:
         logger.warning(f"User not found for ID: {user_id}")
         return jsonify({"error": "User not found"}), 404
+
+    # Convert from Decimal to int if the 'id' is stored that way
+    # Typically, 'user_id' in DB might be a number => Decimal
+    if isinstance(user['id'], (int, float)):
+        final_id = user['id']
+    else:
+        final_id = int(user['id'])
+
     logger.info(f"Current user retrieved: {user['email']}")
     return jsonify({
         "user": {
-            "id": user['id'],
-            "name": user['name'],
-            "email": user['email'],
+            "id": final_id,
+            "name": user["name"],
+            "email": user["email"]
         }
     })
 

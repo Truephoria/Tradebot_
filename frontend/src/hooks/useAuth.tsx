@@ -13,22 +13,22 @@ export default function useAuth() {
   const [isCheckingAuth, setIsCheckingAuth] = useState<boolean>(true);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const router = useRouter(); 
+  const router = useRouter();
   const pathname = usePathname();
   const { token, setToken, clearToken } = useAuthStore();
 
-  // ✅ Restore token on initial load
+  // Restore token on initial load
   useEffect(() => {
     const storedToken = localStorage.getItem('token');
     if (storedToken) {
       setToken(storedToken);
     }
-    
   }, [setToken]);
 
-  // ✅ Axios interceptor to send token from localStorage
+  // Axios interceptors for request and response
   useEffect(() => {
-    const interceptor = axios.interceptors.request.use(
+    // Request interceptor to add token to headers
+    const requestInterceptor = axios.interceptors.request.use(
       (config: InternalAxiosRequestConfig) => {
         const storedToken = localStorage.getItem('token');
         if (storedToken) {
@@ -37,12 +37,35 @@ export default function useAuth() {
         }
         return config;
       },
-      (error: AxiosError) => Promise.reject(error)
+      (error: AxiosError) => {
+        console.error('Axios request error:', error.message);
+        return Promise.reject(error);
+      }
     );
-    return () => axios.interceptors.request.eject(interceptor);
+
+    // Response interceptor to log errors and handle 401
+    const responseInterceptor = axios.interceptors.response.use(
+      (response) => response,
+      (error: AxiosError) => {
+        console.error('Axios response error:', error.response?.data, error.message);
+        if (
+          error.response?.status === 401 &&
+          !window.location.href.includes('/auth')
+        ) {
+          console.log('Redirecting to /auth due to 401 error');
+          window.location.pathname = '/auth';
+        }
+        return Promise.reject(error);
+      }
+    );
+
+    return () => {
+      axios.interceptors.request.eject(requestInterceptor);
+      axios.interceptors.response.eject(responseInterceptor);
+    };
   }, []);
 
-  // ✅ Check authentication status
+  // Check authentication status
   useEffect(() => {
     const checkAuth = async () => {
       if (typeof window === 'undefined') return;
@@ -81,7 +104,7 @@ export default function useAuth() {
     checkAuth();
   }, [pathname, router, clearToken]);
 
-  // ✅ Login
+  // Login
   const login = async (email: string, password: string): Promise<User> => {
     try {
       setLoading(true);
@@ -97,6 +120,7 @@ export default function useAuth() {
       return user;
     } catch (err: unknown) {
       const errorMessage = (err as AxiosError<{ error?: string }>).response?.data?.error || 'Login failed';
+      console.error('Login error:', err); // Add logging for the full error
       setError(errorMessage);
       throw new Error(errorMessage);
     } finally {
@@ -104,7 +128,7 @@ export default function useAuth() {
     }
   };
 
-  // ✅ Register
+  // Register
   const register = async (userData: {
     name: string;
     email: string;
@@ -122,6 +146,7 @@ export default function useAuth() {
       return user;
     } catch (err: unknown) {
       const errorMessage = (err as AxiosError<{ error?: string }>).response?.data?.error || 'Registration failed';
+      console.error('Register error:', err); // Add logging for the full error
       setError(errorMessage);
       throw new Error(errorMessage);
     } finally {
@@ -129,7 +154,7 @@ export default function useAuth() {
     }
   };
 
-  // ✅ Logout
+  // Logout
   const logout = useCallback(() => {
     clearToken();
     localStorage.removeItem('token'); // Clear token from localStorage
