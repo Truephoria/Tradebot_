@@ -12,11 +12,12 @@ interface SettingsPanelProps {
 
 const SettingsPanel: React.FC<SettingsPanelProps> = ({ className }) => {
   const settingState = useSettingStore();
-  const [autoTrading, setAutoTrading] = useState(
-    settingState.settings.botEnabled
-  );
+  const [autoTrading, setAutoTrading] = useState(settingState.settings.botEnabled);
   const [isLoading, setIsLoading] = useState(false);
   const [minRRR, setMinRRR] = useState(settingState.settings.minimumRRR);
+
+  // NEW: local state to show/hide the Auto-Trading “tab”
+  const [showAutoTradingTab, setShowAutoTradingTab] = useState(true);
 
   useEffect(() => {
     // Load settings from API
@@ -49,36 +50,37 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ className }) => {
   };
 
   return (
-    <div
-      className={cn(
-        "bg-card rounded-xl p-5 card-shadow border border-border",
-        className
-      )}
-    >
+    <div className={cn("bg-card rounded-xl p-5 card-shadow border border-border", className)}>
       <div className="flex justify-between items-start mb-4">
-        <h3 className="text-sm font-medium text-muted-foreground">
-          Quick Controls
-        </h3>
+        <h3 className="text-sm font-medium text-muted-foreground">Quick Controls</h3>
       </div>
 
       <div className="space-y-5">
-        <div className="bg-accent rounded-lg p-4">
-          <div className="flex justify-between items-center">
-            <div className="space-y-1">
-              <h4 className="text-sm font-medium text-foreground">
-                Auto-Trading
-              </h4>
-              <p className="text-xs text-muted-foreground">
-                Automatically execute trades based on signals
-              </p>
-            </div>
-            <Switch
-              checked={autoTrading}
-              onCheckedChange={handleToggleAutoTrading}
-              disabled={isLoading}
-            />
-          </div>
+        {/* Toggle button for showing/hiding the Auto-Trading panel */}
+        <div>
+          <Button variant="outline" size="sm" onClick={() => setShowAutoTradingTab((prev) => !prev)}>
+            {showAutoTradingTab ? "Hide" : "Show"} Auto-Trading Tab
+          </Button>
         </div>
+
+        {/* Only render the Auto-Trading panel if showAutoTradingTab is true */}
+        {showAutoTradingTab && (
+          <div className="bg-accent rounded-lg p-4">
+            <div className="flex justify-between items-center">
+              <div className="space-y-1">
+                <h4 className="text-sm font-medium text-foreground">Auto-Trading</h4>
+                <p className="text-xs text-muted-foreground">
+                  Automatically execute trades based on signals
+                </p>
+              </div>
+              <Switch
+                checked={autoTrading}
+                onCheckedChange={handleToggleAutoTrading}
+                disabled={isLoading}
+              />
+            </div>
+          </div>
+        )}
 
         <div className="bg-accent rounded-lg p-4">
           <h4 className="text-sm font-medium text-foreground mb-2">

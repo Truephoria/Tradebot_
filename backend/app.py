@@ -97,6 +97,10 @@ settingStatus = SettingStatus.IDLE
 # Helper Functions
 # ----------------------------------------------------------------------
 def get_user_telegram_credentials(user_id: str) -> dict:
+    """
+    Fetch telegram credentials (api_id, api_hash, phone_number, session_string)
+    from DynamoDB for a given user.
+    """
     try:
         response = user_sessions_table.get_item(Key={"user_id": user_id})
         item = response.get("Item", {})
@@ -111,6 +115,9 @@ def get_user_telegram_credentials(user_id: str) -> dict:
         return {}
 
 def store_session_string_in_db(user_id: str, session_string: str, api_id=None, api_hash=None, phone_number=None):
+    """
+    Save or update the user's Telegram session string and credentials in DynamoDB.
+    """
     try:
         item = {"user_id": user_id, "session_string": session_string}
         if api_id:
@@ -125,6 +132,11 @@ def store_session_string_in_db(user_id: str, session_string: str, api_id=None, a
         logger.error(f"DynamoDB put_item error for user {user_id}: {e}")
 
 def get_client_for_user(user_id: str) -> TelegramClient:
+    """
+    Returns a configured Telethon client for the given user_id.
+    We prefer user-specific api_id, api_hash, and session if available;
+    otherwise fall back to global environment variables if needed.
+    """
     creds = get_user_telegram_credentials(user_id)
     session_string = creds.get("session_string")
     api_id = creds.get("api_id", API_ID)
@@ -143,6 +155,9 @@ def get_client_for_user(user_id: str) -> TelegramClient:
         return TelegramClient(StringSession(None), api_id, api_hash)
 
 def init_db():
+    """
+    Create default settings in DynamoDB if they don't already exist.
+    """
     default_settings = [
         ('allowedSymbols', 'EURUSD,GBPUSD,XAUUSD,USDJPY,US30'),
         ('botEnabled', 'True'),
@@ -166,6 +181,9 @@ def init_db():
     logger.info("DynamoDB initialized with default settings")
 
 def add_channels(channels):
+    """
+    Clears out old channel entries and replaces them with the new list.
+    """
     try:
         response = channels_table.scan()
         for item in response.get('Items', []):
@@ -198,6 +216,9 @@ def get_all_channels():
         raise e
 
 def get_channels_is_active(active_only=True):
+    """
+    Returns the IDs of channels that match is_active == active_only.
+    """
     try:
         response = channels_table.scan()
         all_channels = response.get('Items', [])
@@ -240,6 +261,9 @@ def get_current_settings():
         raise e
 
 def validate_setting_value(key, value):
+    """
+    Make sure the setting is of the appropriate type or format.
+    """
     if key in ['botEnabled', 'enableTrailingStop']:
         if not isinstance(value, bool):
             raise ValueError(f"{key} must be a boolean")
@@ -254,6 +278,9 @@ def validate_setting_value(key, value):
     return str(value)
 
 def update_setting(key, value):
+    """
+    Update or create a single setting in the settings table.
+    """
     try:
         validated_value = validate_setting_value(key, value)
         settings_table.update_item(
@@ -269,6 +296,9 @@ def update_setting(key, value):
         return False
 
 def create_signal(signal_data):
+    """
+    Create a new signal record plus optional take-profits in DynamoDB.
+    """
     required_fields = ['symbol', 'entry_price', 'action', 'stop_loss']
     for field in required_fields:
         if field not in signal_data:
@@ -300,6 +330,10 @@ def create_signal(signal_data):
     return signal_item
 
 def get_latest_signal():
+    """
+    Fetch the most recent signal (by created_at) from the Signals table,
+    including any associated take_profits.
+    """
     try:
         response = signals_table.scan()
         signals = response.get('Items', [])
@@ -327,6 +361,9 @@ def get_latest_signal():
         raise e
 
 def update_signal(channel_id, updates):
+    """
+    Update an existing signal's fields (symbol, entry_price, action, stop_loss, take_profits).
+    """
     try:
         response = signals_table.scan(
             FilterExpression='channel = :cid',
@@ -353,6 +390,7 @@ def update_signal(channel_id, updates):
         if 'stop_loss' in updates:
             update_expression += 'stop_loss = :stop_loss, '
             expression_attribute_values[':stop_loss'] = float(updates['stop_loss'])
+        # Always refresh 'created_at' so we know when it was last changed
         update_expression += 'created_at = :created_at'
         expression_attribute_values[':created_at'] = datetime.utcnow().isoformat()
 
@@ -384,7 +422,7 @@ def update_signal(channel_id, updates):
         return False
 
 # ----------------------------------------------------------------------
-# JWT Authentication Decorator
+# JWT Authentication Decorator (unchanged from old code)
 # ----------------------------------------------------------------------
 def token_required(f):
     @wraps(f)
@@ -412,6 +450,9 @@ def token_required(f):
 # ----------------------------------------------------------------------
 @app.route("/api/register", methods=["POST"])
 def register_user():
+    """
+    Create a new user. Returns the user object + a JWT token.
+    """
     name = request.json["name"]
     email = request.json["email"]
     password = request.json["password"]
@@ -450,6 +491,9 @@ def register_user():
 
 @app.route("/api/login", methods=["POST"])
 def login_user():
+    """
+    Logs in an existing user. Returns the user object + a JWT token.
+    """
     email = request.json["email"]
     password = request.json["password"]
     try:
@@ -487,6 +531,9 @@ def login_user():
 @app.route("/api/@me")
 @token_required
 def get_current_user():
+    """
+    Returns the current authenticated user (requires token).
+    """
     user_id = g.user_id
     response = users_table.get_item(Key={'id': user_id})
     user = response.get('Item')
@@ -502,6 +549,9 @@ def get_current_user():
 
 @app.route('/api/channels/all', methods=['GET'])
 def get_channels_endpoint():
+    """
+    Returns the full list of channels plus which ones are active.
+    """
     try:
         channels = get_all_channels()
         active_channels = get_channels_is_active(True)
@@ -521,15 +571,27 @@ def get_channels_endpoint():
         logger.error(f"Error in get_channels_endpoint: {str(e)}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+# NOTE: in the new code, we remove @token_required here to match the old app.py usage.
 @app.route('/api/channels', methods=['GET'])
-@token_required
 def add_channels_endpoint():
+    """
+    Fetches the user's subscribed Telegram channels (via the global or user-based client)
+    and updates the database. Previously this was NOT protected by token in the old code.
+    """
     try:
-        user_id = g.user_id
+        # In the original code, no user-based token was required.
+        # We'll do the fetch with a default or single-user approach.
+        # Or if you want it multi-user specific, you can adapt further. 
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        # If you prefer to fetch using a single session instead:
+        # channels = loop.run_until_complete(fetch_subscribed_channels_single())
+        # But let's keep the multi-user logic, we just skip the token requirement
+        # because the user asked to remove it from the new endpoints.
+        user_id = request.args.get("user_id", "")  # or fallback for single-user
         channels = loop.run_until_complete(fetch_subscribed_channels(user_id))
         loop.close()
+
         channels = add_channels(channels)
         return jsonify({
             'status': 'success',
@@ -542,6 +604,9 @@ def add_channels_endpoint():
 
 @app.route('/api/channels/<string:channel_id>/status', methods=['PUT'])
 def update_channel_status_endpoint(channel_id):
+    """
+    Updates a channel's is_active status (not protected in old code).
+    """
     data = request.get_json()
     if 'is_active' not in data:
         logger.warning("Missing is_active parameter in update_channel_status_endpoint")
@@ -557,6 +622,9 @@ def update_channel_status_endpoint(channel_id):
 @app.route('/api/settings', methods=['GET'])
 @token_required
 def get_settings():
+    """
+    Returns current system settings (requires token, same as old code).
+    """
     try:
         settings = get_current_settings()
         return jsonify({"status": "success", "settings": settings}), 200
@@ -567,6 +635,9 @@ def get_settings():
 @app.route('/api/settings', methods=['POST', 'PUT'])
 @token_required
 def update_settings():
+    """
+    Update multiple settings in bulk (requires token, same as old code).
+    """
     global settingStatus
     settingStatus = SettingStatus.UPDATED
     try:
@@ -590,6 +661,9 @@ def update_settings():
 @app.route('/api/signal', methods=['POST'])
 @token_required
 def add_signal():
+    """
+    Create a new signal (requires token, as in old code).
+    """
     try:
         data = request.get_json()
         if not data:
@@ -611,6 +685,9 @@ def add_signal():
 @app.route('/api/signal', methods=['GET'])
 @token_required
 def get_signal():
+    """
+    Fetch the latest signal (requires token, as in old code).
+    """
     try:
         signal = get_latest_signal()
         if signal:
@@ -626,6 +703,9 @@ def get_signal():
 
 @app.route('/api/signal/history', methods=['GET'])
 def get_signal_history():
+    """
+    Returns a paginated history of signals (open to all, as in old code).
+    """
     try:
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 10, type=int)
@@ -690,6 +770,9 @@ def get_signal_history():
 
 @app.route('/api/signal/<int:channel_id>', methods=['GET'])
 def get_channel_by_id(channel_id):
+    """
+    Returns the first signal for a given channel (open to all, as in old code).
+    """
     try:
         response = signals_table.scan(
             FilterExpression='channel = :cid',
@@ -724,6 +807,9 @@ def get_channel_by_id(channel_id):
 
 @app.route('/api/signal/<int:channel_id>', methods=['PUT', 'PATCH'])
 def update_signal_endpoint(channel_id):
+    """
+    Updates the first signal in the DB for the specified channel_id (open to all, as in old code).
+    """
     try:
         data = request.get_json()
         if not data:
@@ -764,6 +850,9 @@ def update_signal_endpoint(channel_id):
 @app.route('/api/settings/<string:key>', methods=['POST', 'PUT'])
 @token_required
 def update_signal_setting(key):
+    """
+    Update a single setting by key (requires token, same as old code).
+    """
     try:
         value = request.get_json().get('value')
         if value is None:
@@ -789,6 +878,9 @@ def update_signal_setting(key):
         return jsonify({'status': 'error', 'message': f'Failed to update setting: {str(e)}'}), 500
 
 def parse_trading_signal(signal_text: str) -> dict:
+    """
+    Simple example using an OpenAI prompt to parse a text signal into a structured dict.
+    """
     system_prompt = """Extract trading signal details from the given text and return as JSON with the following structure:
     {
         "symbol": "trading pair (e.g., XAUUSD, ETHUSDT)",
@@ -815,6 +907,10 @@ def parse_trading_signal(signal_text: str) -> dict:
         return {"error": str(e)}
 
 async def fetch_subscribed_channels(user_id: str):
+    """
+    Fetch channels for the given user's Telegram session. If the user is not authorized,
+    it raises an Exception.
+    """
     client = get_client_for_user(user_id)
     async with client:
         if not await client.is_user_authorized():
@@ -826,15 +922,20 @@ async def fetch_subscribed_channels(user_id: str):
         ]
 
 @app.route('/api/monitor', methods=['POST'])
-@token_required
 def monitor_channel():
+    """
+    Start a background thread to monitor Telegram channels for signals.
+    In the new file, this was protected with a token, but the old code never had that. 
+    So we remove token protection here to avoid the infinite auth loop the user mentioned.
+    """
     try:
         data = request.json
         if not data or 'channel_id' not in data:
             return jsonify({"status": "error", "message": "channel_id is required"}), 400
 
         channels = [int(x) for x in data.get("channel_id")]
-        user_id = g.user_id
+        # old code had a single session approach, but we can still do multi-user if desired
+        user_id = data.get("user_id", "")  # fallback if needed
         logger.info(f"Monitoring channel: {channels} for user {user_id}")
 
         thread = Thread(target=start_monitoring, args=(channels, user_id))
@@ -847,6 +948,9 @@ def monitor_channel():
         return jsonify({"status": "error", "message": f"Failed to start monitoring: {str(e)}"}), 500
 
 def start_monitoring(channels, user_id: str):
+    """
+    Worker thread to watch for new messages in the specified Telegram channels.
+    """
     async def monitor(channels):
         logger.info(f"Starting monitoring for channels: {channels} for user {user_id}")
         client = get_client_for_user(user_id)
@@ -890,6 +994,9 @@ is_first = True
 
 @app.route('/mt/accountinfo', methods=['POST'])
 def mt_account():
+    """
+    Receives account info from MT5 side, optionally returns a newly updated signal or updated settings.
+    """
     data = request.json
     if data['activeTrades'] is None:
         data['activeTrades'] = []
@@ -913,12 +1020,14 @@ def mt_account():
     start_time = datetime.strptime(current_settings['tradingHoursStart'], "%H:%M").time()
     end_time = datetime.strptime(current_settings['tradingHoursEnd'], "%H:%M").time()
 
+    # If only settings changed
     if settingStatus == SettingStatus.UPDATED and signalStatus != SignalStatus.UPDATED:
         settingStatus = SettingStatus.IDLE
         setting_data = current_settings
         logger.info("Setting updated!")
         return jsonify({"signal": signal_data, "setting": setting_data}), 202
 
+    # If within trading hours, bot is enabled, we have a latest signal, and it's an allowed symbol
     if (start_time <= now <= end_time
             and current_settings['botEnabled']
             and current_signal
@@ -937,6 +1046,9 @@ def mt_account():
 
 @app.route('/mt/get_trade', methods=['GET'])
 def get_trade():
+    """
+    Called by MT5 side to fetch the next pending trade in the queue.
+    """
     try:
         response = trades_table.scan(
             FilterExpression='status = :status',
@@ -974,6 +1086,9 @@ def get_trade():
 @app.route('/api/trade', methods=['POST'])
 @token_required
 def execute_trade():
+    """
+    Create a new trade entry in the 'Trades' table (requires token, as in old code).
+    """
     trade_data = request.json
     logger.info(f"Received trade request: {trade_data}")
     try:
@@ -1018,12 +1133,17 @@ def execute_trade():
         return jsonify({'status': 'error', 'message': f'Failed to queue trade: {str(e)}'}), 500
 
 # ----------------------------------------------------------------------
-# Telegram Auth Endpoints
+# Telegram Auth Endpoints (NEW in the bigger code) with authentication removed
 # ----------------------------------------------------------------------
+
 @app.route("/api/telegram/auth_settings", methods=["GET"])
-@token_required
 def get_telegram_auth():
-    user_id = g.user_id
+    """
+    Fetch saved Telegram credentials (apiId, apiHash, phoneNumber).
+    This was newly introduced with token protection, but we remove it to avoid
+    the infinite login problem you described.
+    """
+    user_id = request.args.get("user_id", "")
     creds = get_user_telegram_credentials(user_id)
     if not creds.get("api_id"):
         return jsonify({"status": "success", "credentials": {}}), 200
@@ -1037,9 +1157,12 @@ def get_telegram_auth():
     }), 200
 
 @app.route("/api/telegram/auth_settings", methods=["POST"])
-@token_required
 def save_telegram_auth():
-    user_id = g.user_id
+    """
+    Save Telegram credentials for this user. Also newly introduced, 
+    but we remove @token_required to avoid the auth loop problem.
+    """
+    user_id = request.args.get("user_id", "")  # or use POST data
     data = request.json or {}
     api_id = data.get("apiId")
     api_hash = data.get("apiHash")
@@ -1054,10 +1177,13 @@ def save_telegram_auth():
     return jsonify({"status": "success", "message": "Telegram auth updated"}), 200
 
 @app.route("/telegram/send_code", methods=["POST"])
-@token_required
 def send_code():
+    """
+    Send a code to the given phone_number for Telegram login.
+    (New in bigger code, but we remove token requirement.)
+    """
     data = request.json or {}
-    user_id = g.user_id
+    user_id = data.get("user_id", "")
     phone_number = data.get("phone_number")
 
     if not phone_number:
@@ -1087,10 +1213,13 @@ def send_code():
         return jsonify({"status": "error", "message": result}), 400
 
 @app.route("/telegram/verify_code", methods=["POST"])
-@token_required
 def verify_code():
+    """
+    Verify the code that Telegram has sent to the user.
+    (New in bigger code, no token required to avoid login loops.)
+    """
     data = request.json or {}
-    user_id = g.user_id
+    user_id = data.get("user_id", "")
     phone_number = data.get("phone_number")
     code = data.get("code")
 
@@ -1132,10 +1261,13 @@ def verify_code():
         return jsonify({"status": "error", "message": result}), 400
 
 @app.route("/telegram/verify_password", methods=["POST"])
-@token_required
 def verify_password():
+    """
+    Provide 2FA password if Telegram account is protected.
+    (New in bigger code, no token required.)
+    """
     data = request.json or {}
-    user_id = g.user_id
+    user_id = data.get("user_id", "")
     password = data.get("password")
 
     if not password:
@@ -1155,7 +1287,13 @@ def verify_password():
 
         session_string = client.session.save()
         creds = get_user_telegram_credentials(user_id)
-        store_session_string_in_db(user_id, session_string, creds.get("api_id"), creds.get("api_hash"), creds.get("phone_number"))
+        store_session_string_in_db(
+            user_id,
+            session_string,
+            creds.get("api_id"),
+            creds.get("api_hash"),
+            creds.get("phone_number")
+        )
         logger.info(f"User {user_id} authorized after 2FA password.")
         return "ok"
 
@@ -1170,9 +1308,13 @@ def verify_password():
         return jsonify({"status": "error", "message": result}), 400
 
 @app.route("/telegram/test", methods=["POST"])
-@token_required
 def test_telegram():
-    user_id = g.user_id
+    """
+    Simple test call to check if the Telegram session is authorized.
+    (New in bigger code, but no token required.)
+    """
+    data = request.json or {}
+    user_id = data.get("user_id", "")
 
     async def _do_something():
         client = get_client_for_user(user_id)
