@@ -97,7 +97,6 @@ settingStatus = SettingStatus.IDLE
 
 # ----------------------------------------------------------------------
 # HELPER FUNCTIONS for TELEGAM USERSESSIONS
-# Using partial-update logic (like your Settings) instead of overwriting.
 # ----------------------------------------------------------------------
 
 def validate_user_session_value(key: str, value) -> str:
@@ -1060,13 +1059,19 @@ def execute_trade():
 
 
 # ----------------------------------------------------------------------
-# Telegram Auth Endpoints (new in the bigger code), with token removed
-# and partial updates so they persist like your settings table
+# Telegram Auth Endpoints
 # ----------------------------------------------------------------------
 
 @app.route("/api/telegram/auth_settings", methods=["GET"])
 def get_telegram_auth():
+    ### ADDED OR MODIFIED ###
+    # Try both query param and request.json to get user_id if not present in args.
     user_id = request.args.get("user_id", "")
+    if not user_id:
+        data = request.json or {}
+        user_id = data.get("user_id", "")
+    ########################
+
     creds = get_user_telegram_credentials(user_id)
     # Return empty if not found
     if not creds.get("API_ID"):
@@ -1082,13 +1087,23 @@ def get_telegram_auth():
 
 @app.route("/api/telegram/auth_settings", methods=["POST"])
 def save_telegram_auth():
-    
+    print("save telegram auth")
+
+    ### ADDED OR MODIFIED ###
+    # Fallback to request.json if user_id is not in the query params.
     user_id = request.args.get("user_id", "")
+    if not user_id:
+        data_check = request.json or {}
+        user_id = data_check.get("user_id", "")
+    ########################
+
     data = request.json or {}
     api_id = data.get("apiId")
     api_hash = data.get("apiHash")
     phone_number = data.get("phoneNumber")
 
+    if not user_id:
+        return jsonify({"error": "Missing user_id (query param or in JSON)"}), 400
     if not api_id or not api_hash or not phone_number:
         return jsonify({"error": "Missing Telegram credentials"}), 400
 

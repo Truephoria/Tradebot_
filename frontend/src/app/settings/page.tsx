@@ -160,18 +160,25 @@ const SettingsPage: React.FC = () => {
   // Auth form submit (SENDS the credentials to your server endpoint)
   const onAuthSubmit = async (values: z.infer<typeof authFormSchema>) => {
     try {
-      // If your server requires a JWT token, retrieve it from your auth store/context/localStorage
-      // For example: const token = localStorage.getItem('token') || '';
+      console.log('button clicked');
+
+      // In a real app, userId might come from your auth context, NextAuth, localStorage, etc.
+      // For now, let's just use a placeholder. Replace "123" with how you actually get the user ID.
+      const userId = "123";
+
+      const payload = {
+        user_id: userId,
+        ...values,
+      };
 
       const response = await fetch('/api/telegram/auth_settings', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          // 'Authorization': `Bearer ${token}` // if needed
         },
-        body: JSON.stringify(values),
+        body: JSON.stringify(payload),
       });
-      console.log("button clicked")
+
       if (!response.ok) {
         const msg = await response.text();
         throw new Error(msg || 'Failed to save credentials');
@@ -246,7 +253,14 @@ const SettingsPage: React.FC = () => {
                                   )}
                                 </SelectTrigger>
                               </FormControl>
-                              <SelectContent>
+                              {/* 
+                                  Updated classes for z-index and optional blur
+                                  You can remove backdrop-blur-sm if you only want the z-index fix
+                               */}
+                              <SelectContent
+                                position="popper"
+                                className="z-50 backdrop-blur-sm bg-white/80"
+                              >
                                 <SelectItem value="FIXED">Fixed Lot Size</SelectItem>
                                 <SelectItem value="PERCENTAGE">Percentage Based</SelectItem>
                               </SelectContent>
