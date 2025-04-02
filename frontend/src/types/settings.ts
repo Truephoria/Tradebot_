@@ -12,9 +12,9 @@ export type SettingsType = {
   tradingHoursEnd: string;
   tradingHoursStart: string;
   // Telegram settings
-  apiId: number; // API_ID as an integer
-  apiHash: number; // API_HASH as an integer
-  phoneNumber: number; // PHONE_NUMBER as an integer
+  apiId: string; // Changed to string
+  apiHash: string; // Changed to string
+  phoneNumber: string; // Changed to string
 };
 
 export type SettingsStateType = {
