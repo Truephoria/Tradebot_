@@ -171,7 +171,7 @@ const SettingsPage: React.FC = () => {
         },
         body: JSON.stringify(values),
       });
-
+      console.log("button clicked")
       if (!response.ok) {
         const msg = await response.text();
         throw new Error(msg || 'Failed to save credentials');
