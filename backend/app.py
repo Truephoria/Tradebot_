@@ -38,13 +38,16 @@ logger = logging.getLogger(__name__)
 CORS(
     app,
     origins=["https://main.d1bpy75hw1zntc.amplifyapp.com"],
-    supports_credentials=True
+    supports_credentials=True,
+    allow_headers=["Authorization", "Content-Type"]
+    
 )
 
 socketio = SocketIO(
     app,
     cors_allowed_origins=["https://main.d1bpy75hw1zntc.amplifyapp.com"],
-    async_mode="eventlet"
+    async_mode="eventlet",
+    allow_headers=["Authorization", "Content-Type"]
 )
 
 secret_key_value = os.getenv("SECRET_KEY", "fallback-secret")
