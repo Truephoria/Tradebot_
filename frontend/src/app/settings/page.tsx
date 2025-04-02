@@ -40,7 +40,7 @@ import { useSettingStore } from '@/stores/settings-store';
 import { Socket } from 'socket.io-client';
 
 /* ------------------------------
-   Existing Risk/Trading schema
+   Risk/Trading + Telegram schema
 ------------------------------ */
 const formSchema = z.object({
   riskType: z.enum(['FIXED', 'PERCENTAGE']),
@@ -53,6 +53,9 @@ const formSchema = z.object({
   maxTradesPerDay: z.coerce.number().min(0).max(100),
   allowedSymbols: z.string(),
   botEnabled: z.boolean().default(true),
+  apiId: z.string().min(1, 'API_ID is required'),
+  apiHash: z.string().min(1, 'API_HASH is required'),
+  phoneNumber: z.string().min(1, 'PHONE_NUMBER is required'),
 });
 
 const defaultSettings = {
@@ -66,18 +69,6 @@ const defaultSettings = {
   maxTradesPerDay: 10,
   allowedSymbols: 'EURUSD,GBPUSD,XAUUSD,USDJPY,US30',
   botEnabled: true,
-};
-
-/* -------------------------------------
-   Authentication-related schema
--------------------------------------- */
-const authFormSchema = z.object({
-  apiId: z.string().min(1, 'API_ID is required'),
-  apiHash: z.string().min(1, 'API_HASH is required'),
-  phoneNumber: z.string().min(1, 'PHONE_NUMBER is required'),
-});
-
-const defaultAuthSettings = {
   apiId: '',
   apiHash: '',
   phoneNumber: '',
@@ -86,28 +77,20 @@ const defaultAuthSettings = {
 const SettingsPage: React.FC = () => {
   const socket = useRef<Socket | null>(null);
   const setSignalState = useSignalStore((state) => state.setSignal);
-  const { settings, getSettings, updateSettings, getTelegramSettings, updateTelegramSettings } = useSettingStore();
-  const [isEditing, setIsEditing] = useState(false); // Track editing state for risk/trading form
-  const [isEditingAuth, setIsEditingAuth] = useState(false); // Track editing state for auth form
+  const { settings, getSettings, updateSettings } = useSettingStore();
+  const [isEditing, setIsEditing] = useState(false); // Track editing state for all forms
   const [isInitialLoad, setIsInitialLoad] = useState(true); // Track initial load to prevent resetting
 
-  // Form 1: Risk/Trading settings
+  // Form for all settings (risk/trading + Telegram)
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: defaultSettings,
   });
 
-  // Form 2: Authentication settings
-  const authForm = useForm<z.infer<typeof authFormSchema>>({
-    resolver: zodResolver(authFormSchema),
-    defaultValues: defaultAuthSettings,
-  });
-
   useEffect(() => {
-    // Fetch both risk/trading and Telegram settings on initial load
-    Promise.all([getSettings(), getTelegramSettings()])
+    // Fetch all settings on initial load
+    getSettings()
       .then(() => {
-        // Reset risk/trading form
         form.reset({
           riskType: settings.riskType || defaultSettings.riskType,
           riskValue: settings.riskValue || defaultSettings.riskValue,
@@ -119,19 +102,15 @@ const SettingsPage: React.FC = () => {
           maxTradesPerDay: settings.maxTradesPerDay || defaultSettings.maxTradesPerDay,
           allowedSymbols: settings.allowedSymbols || defaultSettings.allowedSymbols,
           botEnabled: settings.botEnabled ?? defaultSettings.botEnabled,
+          apiId: settings.apiId || defaultSettings.apiId,
+          apiHash: settings.apiHash || defaultSettings.apiHash,
+          phoneNumber: settings.phoneNumber || defaultSettings.phoneNumber,
         });
-        // Reset Telegram auth form
-        authForm.reset({
-          apiId: settings.apiId || defaultAuthSettings.apiId,
-          apiHash: settings.apiHash || defaultAuthSettings.apiHash,
-          phoneNumber: settings.phoneNumber || defaultAuthSettings.phoneNumber,
-        });
-        setIsInitialLoad(false); // Mark initial load as complete
+        setIsInitialLoad(false);
       })
       .catch((err) => {
         console.error('Failed to fetch settings:', err);
         form.reset(defaultSettings);
-        authForm.reset(defaultAuthSettings);
         setIsInitialLoad(false);
       });
 
@@ -151,11 +130,11 @@ const SettingsPage: React.FC = () => {
     return () => {
       currentSocket.off('new_signal');
     };
-  }, [form, authForm, getSettings, getTelegramSettings, setSignalState]);
+  }, [form, getSettings, setSignalState]);
 
   // Re-sync form only if not editing and after initial load
   useEffect(() => {
-    if (isInitialLoad) return; // Skip during initial load
+    if (isInitialLoad) return;
     if (!isEditing && settings) {
       form.reset({
         riskType: settings.riskType || defaultSettings.riskType,
@@ -168,18 +147,14 @@ const SettingsPage: React.FC = () => {
         maxTradesPerDay: settings.maxTradesPerDay || defaultSettings.maxTradesPerDay,
         allowedSymbols: settings.allowedSymbols || defaultSettings.allowedSymbols,
         botEnabled: settings.botEnabled ?? defaultSettings.botEnabled,
+        apiId: settings.apiId || defaultSettings.apiId,
+        apiHash: settings.apiHash || defaultSettings.apiHash,
+        phoneNumber: settings.phoneNumber || defaultSettings.phoneNumber,
       });
     }
-    if (!isEditingAuth && settings) {
-      authForm.reset({
-        apiId: settings.apiId || defaultAuthSettings.apiId,
-        apiHash: settings.apiHash || defaultAuthSettings.apiHash,
-        phoneNumber: settings.phoneNumber || defaultAuthSettings.phoneNumber,
-      });
-    }
-  }, [settings, isEditing, isEditingAuth, form, authForm, isInitialLoad]);
+  }, [settings, isEditing, form, isInitialLoad]);
 
-  // Main form submit (risk/trading settings)
+  // Form submit (all settings)
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
     try {
       await updateSettings(values);
@@ -191,28 +166,9 @@ const SettingsPage: React.FC = () => {
     }
   };
 
-
-  // Auth form submit (Telegram settings)
-  const onAuthSubmit = async (values: z.infer<typeof authFormSchema>) => {
-    try {
-      await updateTelegramSettings(values);
-      toast.success('Authentication credentials saved');
-      setIsEditingAuth(false);
-    } catch (error) {
-      console.error('Error updating credentials:', error);
-      toast.error('Error updating credentials');
-    }
-  };
-
   const handleFormChange = () => {
     if (!isEditing) {
       setIsEditing(true);
-    }
-  };
-
-  const handleAuthFormChange = () => {
-    if (!isEditingAuth) {
-      setIsEditingAuth(true);
     }
   };
 
@@ -238,7 +194,7 @@ const SettingsPage: React.FC = () => {
           </TabsList>
 
           {/* ---------------------- */}
-          {/*  Risk/Trading Forms  */}
+          {/*  All Settings Form  */}
           {/* ---------------------- */}
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} onChange={handleFormChange}>
@@ -464,7 +420,81 @@ const SettingsPage: React.FC = () => {
                 </Card>
               </TabsContent>
 
-              {/* Save/Cancel Buttons */}
+              {/* -------------------------------
+                  Authentication Tab / Form
+              ------------------------------- */}
+              <TabsContent value="authentication" className="space-y-4">
+                <Card className="card-shadow border border-border">
+                  <CardHeader>
+                    <CardTitle>Authentication</CardTitle>
+                    <CardDescription>
+                      Enter your Telegram credentials below
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    <div className="space-y-4">
+                      <FormField
+                        control={form.control}
+                        name="apiId"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>API_ID</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="text"
+                                placeholder="Your Telegram API ID"
+                                {...field}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="apiHash"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>API_HASH</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="text"
+                                placeholder="Your Telegram API Hash"
+                                {...field}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="phoneNumber"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Phone Number</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="text"
+                                placeholder="Your phone number (e.g., +15551234567)"
+                                {...field}
+                              />
+                            </FormControl>
+                            <FormDescription>
+                              Enter your phone number with the country code (e.g., +1 for the US).
+                            </FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              {/* Save/Cancel Buttons for All Settings */}
               <div className="mt-6 flex justify-end space-x-4">
                 <Button
                   type="button"
@@ -482,102 +512,6 @@ const SettingsPage: React.FC = () => {
               </div>
             </form>
           </Form>
-
-          {/* -------------------------------
-              Authentication Tab / Form
-          ------------------------------- */}
-          <TabsContent value="authentication" className="space-y-4">
-            <Card className="card-shadow border border-border">
-              <CardHeader>
-                <CardTitle>Authentication</CardTitle>
-                <CardDescription>
-                  Enter your Telegram credentials below
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <Form {...authForm}>
-                  <form
-                    onSubmit={authForm.handleSubmit(onAuthSubmit)}
-                    onChange={handleAuthFormChange}
-                    className="space-y-4"
-                  >
-                    <FormField
-                      control={authForm.control}
-                      name="apiId"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>API_ID</FormLabel>
-                          <FormControl>
-                            <Input
-                              type="text"
-                              placeholder="Your Telegram API ID"
-                              {...field}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={authForm.control}
-                      name="apiHash"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>API_HASH</FormLabel>
-                          <FormControl>
-                            <Input
-                              type="text"
-                              placeholder="Your Telegram API Hash"
-                              {...field}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={authForm.control}
-                      name="phoneNumber"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Phone Number</FormLabel>
-                          <FormControl>
-                            <Input
-                              type="text"
-                              placeholder="Your phone number (e.g., +15551234567)"
-                              {...field}
-                            />
-                          </FormControl>
-                          <FormDescription>
-                            Enter your phone number with the country code (e.g., +1 for the US).
-                          </FormDescription>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <div className="flex justify-end space-x-4">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => {
-                          authForm.reset(settings || defaultAuthSettings);
-                          setIsEditingAuth(false);
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                      <Button type="submit" disabled={!isEditingAuth}>
-                        Save Authentication
-                      </Button>
-                    </div>
-                  </form>
-                </Form>
-              </CardContent>
-            </Card>
-          </TabsContent>
         </Tabs>
       </main>
     </div>

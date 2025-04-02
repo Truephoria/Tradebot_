@@ -1073,35 +1073,39 @@ def execute_trade():
 # Telegram Auth Endpoints
 # ----------------------------------------------------------------------
 
-@app.route("/api/telegram/auth_settings", methods=["GET"])
+@app.route('/api/telegram/auth_settings', methods=['GET'])
 @token_required
-def get_telegram_auth():
-    user_id = g.user_id  # Get user_id from JWT token
-    creds = get_user_telegram_credentials(str(user_id))
-    # Return empty if not found
-    if not creds.get("API_ID"):
-        return jsonify({"status": "success", "credentials": {}}), 200
-    return jsonify({
-        "status": "success",
-        "credentials": {
-            "apiId": creds["API_ID"],
-            "apiHash": creds["API_HASH"],
-            "phoneNumber": creds["PHONE_NUMBER"]
-        }
-    }), 200
+def get_telegram_auth_settings():
+    user_id = g.user_id
+    
+    if not user_id:
+        logger.error("User ID not found in token")
+        return jsonify({'error': 'User ID not found in token'}), 401
 
+    try:
+        response = user_sessions_table.get_item(Key={'user_id': user_id})
+        item = response.get('Item', {})
+        credentials = {
+            'apiId': item.get('apiId', ''),
+            'apiHash': item.get('apiHash', ''),
+            'phoneNumber': item.get('phoneNumber', '')
+        }
+        return jsonify({'status': 'success', 'credentials': credentials}), 200
+    except ClientError as e:
+        logger.error(f"Error fetching Telegram auth settings: {e}")
+        return jsonify({'error': 'Failed to fetch Telegram auth settings'}), 500
 @app.route('/api/telegram/auth_settings', methods=['POST'])
 @token_required
 def update_telegram_auth_settings():
     user_id = g.user_id
-    logger.info(f"Updating Telegram settings for user_id: {user_id}")
-    logger.info(f"Request data: {request.get_json()}")
-
+    
     if not user_id:
+        logger.error("User ID not found in token")
         return jsonify({'error': 'User ID not found in token'}), 401
 
     data = request.get_json()
     if not data:
+        logger.error("No data provided in request")
         return jsonify({'error': 'No data provided'}), 400
 
     api_id = data.get('apiId')
@@ -1109,6 +1113,7 @@ def update_telegram_auth_settings():
     phone_number = data.get('phoneNumber')
 
     if not all([api_id, api_hash, phone_number]):
+        logger.error("Missing required fields (apiId, apiHash, phoneNumber)")
         return jsonify({'error': 'Missing required fields (apiId, apiHash, phoneNumber)'}), 400
 
     try:
