@@ -12,7 +12,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DollarSign, Lock, Shield } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -69,7 +68,7 @@ const defaultSettings = {
 };
 
 /* -------------------------------------
-   NEW: Authentication-related schema
+   Authentication-related schema
 -------------------------------------- */
 const authFormSchema = z.object({
   apiId: z.coerce.number({ invalid_type_error: 'Must be a number' }),
@@ -77,7 +76,6 @@ const authFormSchema = z.object({
   phoneNumber: z.string().min(1, 'PHONE_NUMBER is required'),
 });
 
-// Example defaults for authentication form
 const defaultAuthSettings = {
   apiId: 0,
   apiHash: '',
@@ -87,7 +85,7 @@ const defaultAuthSettings = {
 const SettingsPage: React.FC = () => {
   const socket = useRef<Socket | null>(null);
   const setSignalState = useSignalStore((state) => state.setSignal);
-  const { settings, getSettings, updateSettings } = useSettingStore();
+  const { settings, getSettings, updateSettings, getTelegramSettings, updateTelegramSettings } = useSettingStore();
   const [isEditing, setIsEditing] = useState(false); // Track editing state
 
   // Form 1: Risk/Trading settings
@@ -103,16 +101,28 @@ const SettingsPage: React.FC = () => {
   });
 
   useEffect(() => {
-    // Fetch your existing settings from the store (and possibly auth fields too)
-    getSettings()
+    // Fetch both risk/trading and Telegram settings
+    Promise.all([getSettings(), getTelegramSettings()])
       .then(() => {
-        form.reset(settings || defaultSettings);
-        // If your store returns authentication fields, reset them too, e.g.:
-        // authForm.reset({
-        //   apiId: settings?.apiId ?? 12345,
-        //   apiHash: settings?.apiHash ?? "",
-        //   phoneNumber: settings?.phoneNumber ?? ""
-        // });
+        // Reset risk/trading form
+        form.reset({
+          riskType: settings.riskType || defaultSettings.riskType,
+          riskValue: settings.riskValue || defaultSettings.riskValue,
+          maxDailyLoss: settings.maxDailyLoss || defaultSettings.maxDailyLoss,
+          minimumRRR: settings.minimumRRR || defaultSettings.minimumRRR,
+          enableTrailingStop: settings.enableTrailingStop ?? defaultSettings.enableTrailingStop,
+          tradingHoursStart: settings.tradingHoursStart || defaultSettings.tradingHoursStart,
+          tradingHoursEnd: settings.tradingHoursEnd || defaultSettings.tradingHoursEnd,
+          maxTradesPerDay: settings.maxTradesPerDay || defaultSettings.maxTradesPerDay,
+          allowedSymbols: settings.allowedSymbols || defaultSettings.allowedSymbols,
+          botEnabled: settings.botEnabled ?? defaultSettings.botEnabled,
+        });
+        // Reset Telegram auth form
+        authForm.reset({
+          apiId: settings.apiId || defaultAuthSettings.apiId,
+          apiHash: settings.apiHash || defaultAuthSettings.apiHash,
+          phoneNumber: settings.phoneNumber || defaultAuthSettings.phoneNumber,
+        });
       })
       .catch((err) => {
         console.error('Failed to fetch settings:', err);
@@ -136,16 +146,32 @@ const SettingsPage: React.FC = () => {
     return () => {
       currentSocket.off('new_signal');
     };
-  }, []);
+  }, [form, authForm, settings, getSettings, getTelegramSettings, setSignalState]);
 
   // Re-sync form if settings update outside editing
   useEffect(() => {
     if (!isEditing && settings) {
-      form.reset(settings);
+      form.reset({
+        riskType: settings.riskType || defaultSettings.riskType,
+        riskValue: settings.riskValue || defaultSettings.riskValue,
+        maxDailyLoss: settings.maxDailyLoss || defaultSettings.maxDailyLoss,
+        minimumRRR: settings.minimumRRR || defaultSettings.minimumRRR,
+        enableTrailingStop: settings.enableTrailingStop ?? defaultSettings.enableTrailingStop,
+        tradingHoursStart: settings.tradingHoursStart || defaultSettings.tradingHoursStart,
+        tradingHoursEnd: settings.tradingHoursEnd || defaultSettings.tradingHoursEnd,
+        maxTradesPerDay: settings.maxTradesPerDay || defaultSettings.maxTradesPerDay,
+        allowedSymbols: settings.allowedSymbols || defaultSettings.allowedSymbols,
+        botEnabled: settings.botEnabled ?? defaultSettings.botEnabled,
+      });
+      authForm.reset({
+        apiId: settings.apiId || defaultAuthSettings.apiId,
+        apiHash: settings.apiHash || defaultAuthSettings.apiHash,
+        phoneNumber: settings.phoneNumber || defaultAuthSettings.phoneNumber,
+      });
     }
-  }, [settings, isEditing]);
+  }, [settings, isEditing, form, authForm]);
 
-  // Main form submit
+  // Main form submit (risk/trading settings)
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
     try {
       await updateSettings(values);
@@ -157,33 +183,10 @@ const SettingsPage: React.FC = () => {
     }
   };
 
-  // Auth form submit (SENDS the credentials to your server endpoint)
+  // Auth form submit (Telegram settings)
   const onAuthSubmit = async (values: z.infer<typeof authFormSchema>) => {
     try {
-      console.log('button clicked');
-
-      // In a real app, userId might come from your auth context, NextAuth, localStorage, etc.
-      // For now, let's just use a placeholder. Replace "123" with how you actually get the user ID.
-      const userId = "123";
-
-      const payload = {
-        user_id: userId,
-        ...values,
-      };
-
-      const response = await fetch('/api/telegram/auth_settings', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        const msg = await response.text();
-        throw new Error(msg || 'Failed to save credentials');
-      }
-
+      await updateTelegramSettings(values);
       toast.success('Authentication credentials saved');
     } catch (error) {
       console.error('Error updating credentials:', error);
@@ -253,10 +256,6 @@ const SettingsPage: React.FC = () => {
                                   )}
                                 </SelectTrigger>
                               </FormControl>
-                              {/* 
-                                  Updated classes for z-index and optional blur
-                                  You can remove backdrop-blur-sm if you only want the z-index fix
-                               */}
                               <SelectContent
                                 position="popper"
                                 className="z-50 backdrop-blur-sm bg-white/80"

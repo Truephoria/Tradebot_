@@ -108,37 +108,33 @@ def validate_user_session_value(key: str, value) -> str:
     A simple validator; can be expanded if you want stricter checks.
     Currently just returns the value as a string.
     """
-    # Example: if key in ["API_ID"] -> check it is numeric, etc. 
-    # For now, we just convert to str:
     return str(value)
-
-def update_user_session_field(user_id: str, key: str, value):
-    """
-    Updates exactly one field in the 'UserSessions' table, 
-    mimicking how 'update_setting()' works for the 'Settings' table.
-    """
-    validated_value = validate_user_session_value(key, value)
-    user_sessions_table.update_item(
-        Key={"user_id": user_id},
-        UpdateExpression='SET #val = :val',
-        ExpressionAttributeNames={'#val': key},
-        ExpressionAttributeValues={':val': validated_value}
-    )
-    logger.info(f"Updated user {user_id} field '{key}' to {validated_value} in DynamoDB.")
 
 def store_session_string_in_db(user_id: str, session_string: str, api_id=None, api_hash=None, phone_number=None):
     """
-    Replaces the old put_item approach with partial updates for each field,
-    so we don't overwrite other fields if they aren't provided.
+    Stores or updates the Telegram credentials in the 'UserSessions' table.
+    Uses put_item to create or overwrite the item, ensuring all fields are updated.
     """
-    # Always update the session_string:
-    update_user_session_field(user_id, "session_string", session_string)
-    if api_id:
-        update_user_session_field(user_id, "API_ID", api_id)
-    if api_hash:
-        update_user_session_field(user_id, "API_HASH", api_hash)
-    if phone_number:
-        update_user_session_field(user_id, "PHONE_NUMBER", phone_number)
+    try:
+        # Fetch existing item to preserve fields not being updated
+        existing_item = user_sessions_table.get_item(Key={"user_id": user_id}).get("Item", {})
+        
+        # Prepare the new item with updated fields
+        updated_item = {
+            "user_id": user_id,
+            "session_string": validate_user_session_value("session_string", session_string),
+            "API_ID": validate_user_session_value("API_ID", api_id) if api_id is not None else existing_item.get("API_ID", ""),
+            "API_HASH": validate_user_session_value("API_HASH", api_hash) if api_hash is not None else existing_item.get("API_HASH", ""),
+            "PHONE_NUMBER": validate_user_session_value("PHONE_NUMBER", phone_number) if phone_number is not None else existing_item.get("PHONE_NUMBER", ""),
+            "updated_at": datetime.utcnow().isoformat()
+        }
+        
+        # Use put_item to create or overwrite the item
+        user_sessions_table.put_item(Item=updated_item)
+        logger.info(f"Stored Telegram credentials for user {user_id}")
+    except Exception as e:
+        logger.error(f"Error storing Telegram credentials for user {user_id}: {str(e)}")
+        raise
 
 def get_user_telegram_credentials(user_id: str) -> dict:
     """
@@ -148,11 +144,13 @@ def get_user_telegram_credentials(user_id: str) -> dict:
     try:
         response = user_sessions_table.get_item(Key={"user_id": user_id})
         item = response.get("Item", {})
+        if not item:
+            logger.debug(f"No Telegram credentials found for user {user_id}")
         return {
-            "API_ID": item.get("API_ID"),
-            "API_HASH": item.get("API_HASH"),
-            "PHONE_NUMBER": item.get("PHONE_NUMBER"),
-            "session_string": item.get("session_string")
+            "API_ID": item.get("API_ID", ""),
+            "API_HASH": item.get("API_HASH", ""),
+            "PHONE_NUMBER": item.get("PHONE_NUMBER", ""),
+            "session_string": item.get("session_string", "")
         }
     except ClientError as e:
         logger.error(f"DynamoDB get_item error for user {user_id}: {e}")
@@ -510,7 +508,7 @@ def login_user():
             logger.warning(f"Invalid password for email: {email}")
             return jsonify({"error": "Invalid email or password."}), 401
 
-        user_id = int(user['id']) if 'id' in user else None
+        user_id = str(user['id']) if 'id' in user else None  # Convert to string for consistency
         user_name = user.get('name', '')
         user_email = user['email']
 
@@ -519,10 +517,21 @@ def login_user():
             'exp': datetime.utcnow() + timedelta(hours=24)
         }, SECRET_KEY, algorithm='HS256')
 
+        # Fetch risk/trading settings
+        settings = get_current_settings()
+        # Fetch Telegram settings for this user
+        creds = get_user_telegram_credentials(user_id)
+
         logger.info(f"User logged in: {email}")
         return jsonify({
             "user": {"id": user_id, "name": user_name, "email": user_email},
-            "token": token
+            "token": token,
+            "settings": settings,
+            "telegramSettings": {
+                "apiId": creds.get("API_ID", ""),
+                "apiHash": creds.get("API_HASH", ""),
+                "phoneNumber": creds.get("PHONE_NUMBER", "")
+            }
         })
     except Exception as e:
         logger.error(f"Error logging in user: {str(e)}")
@@ -1067,16 +1076,10 @@ def execute_trade():
 # ----------------------------------------------------------------------
 
 @app.route("/api/telegram/auth_settings", methods=["GET"])
+@token_required
 def get_telegram_auth():
-    ### ADDED OR MODIFIED ###
-    # Try both query param and request.json to get user_id if not present in args.
-    user_id = request.args.get("user_id", "")
-    if not user_id:
-        data = request.json or {}
-        user_id = data.get("user_id", "")
-    ########################
-
-    creds = get_user_telegram_credentials(user_id)
+    user_id = g.user_id  # Get user_id from JWT token
+    creds = get_user_telegram_credentials(str(user_id))
     # Return empty if not found
     if not creds.get("API_ID"):
         return jsonify({"status": "success", "credentials": {}}), 200
@@ -1090,32 +1093,26 @@ def get_telegram_auth():
     }), 200
 
 @app.route("/api/telegram/auth_settings", methods=["POST"])
+@token_required
 def save_telegram_auth():
-    print("save telegram auth")
-
-    ### ADDED OR MODIFIED ###
-    # Fallback to request.json if user_id is not in the query params.
-    user_id = request.args.get("user_id", "")
-    if not user_id:
-        data_check = request.json or {}
-        user_id = data_check.get("user_id", "")
-    ########################
-
+    user_id = g.user_id  # Get user_id from JWT token
     data = request.json or {}
     api_id = data.get("apiId")
     api_hash = data.get("apiHash")
     phone_number = data.get("phoneNumber")
 
-    if not user_id:
-        return jsonify({"error": "Missing user_id (query param or in JSON)"}), 400
     if not api_id or not api_hash or not phone_number:
         return jsonify({"error": "Missing Telegram credentials"}), 400
 
-    existing_creds = get_user_telegram_credentials(user_id)
-    session_string = existing_creds.get("session_string", "")
-    # This call now does partial updates for each field, so we don't overwrite others.
-    store_session_string_in_db(user_id, session_string, api_id, api_hash, phone_number)
-    return jsonify({"status": "success", "message": "Telegram auth updated"}), 200
+    try:
+        existing_creds = get_user_telegram_credentials(str(user_id))
+        session_string = existing_creds.get("session_string", "")
+        # Store the updated credentials in DynamoDB
+        store_session_string_in_db(str(user_id), session_string, api_id, api_hash, phone_number)
+        return jsonify({"status": "success", "message": "Telegram credentials saved"}), 200
+    except Exception as e:
+        logger.error(f"Error saving Telegram credentials for user {user_id}: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/telegram/send_code", methods=["POST"])
 def send_code():
