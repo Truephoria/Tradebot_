@@ -1,4 +1,4 @@
-"use client";
+'use client';
 
 import React, { useEffect } from "react";
 import { cn } from "@/lib/utils";
@@ -13,9 +13,7 @@ import { SignalStateType } from "@/types/signal";
 import { MetaDataType } from "@/types/metadata";
 import { useSignalStore } from "@/stores/signal-store";
 import { useMetadataStore } from "@/stores/metadata-store";
-import useAuth from "@/hooks/useAuth"; // Use useAuth instead of useAuthStore
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL;
+import useAuth from "@/hooks/useAuth";
 
 interface DashboardProps {
   className?: string;
@@ -24,15 +22,14 @@ interface DashboardProps {
 const Dashboard: React.FC<DashboardProps> = ({ className }) => {
   const metadataState = useMetadataStore();
   const signalState = useSignalStore();
-  const { token } = useAuth(); // Use useAuth hook
+  const { token } = useAuth();
 
   useEffect(() => {
-    if (!token) return; // Only start polling if the user is authenticated
+    if (!token) return;
 
     const fetchUpdates = async () => {
       try {
-        // Fetch latest signal
-        const signalResponse = await axios.get(`${API_URL}/api/signal`, {
+        const signalResponse = await axios.get('/api/signal', {
           headers: { Authorization: `Bearer ${token}` }
         });
         const latestSignal: SignalStateType = signalResponse.data.signal;
@@ -40,8 +37,7 @@ const Dashboard: React.FC<DashboardProps> = ({ className }) => {
           signalState.setSignal(latestSignal);
         }
 
-        // Fetch recent trades and metadata
-        const tradeResponse = await axios.get(`${API_URL}/api/trade/history`, {
+        const tradeResponse = await axios.get('/api/trade/history', {
           headers: { Authorization: `Bearer ${token}` }
         });
         const tradeData: MetaDataType = tradeResponse.data;
@@ -60,10 +56,7 @@ const Dashboard: React.FC<DashboardProps> = ({ className }) => {
       }
     };
 
-    // Initial fetch
     fetchUpdates();
-
-    // Set up polling every 10 seconds
     const interval = setInterval(fetchUpdates, 10000);
     return () => clearInterval(interval);
   }, [token, signalState, metadataState]);

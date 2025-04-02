@@ -14,7 +14,7 @@ export const initChannelListState: ChannelListType = {
 };
 
 // Initialize SocketIO client
-const socket = io('http://localhost:5000', { // Update to your ngrok URL later
+const socket = io('https://pkbk36mqmi.us-east-2.awsapprunner.com', { // Update to your ngrok URL later
   reconnection: true,
   transports: ['websocket'],
 });
@@ -26,7 +26,7 @@ export const useChannelStore = create<ChannelStoreType>((set) => ({
     try {
       const token = useAuthStore.getState().token;
       if (!token) throw new Error("No authentication token available");
-      const response = await fetch('http://localhost:5000/api/channels/all', { // Update to ngrok URL later
+      const response = await fetch('https://pkbk36mqmi.us-east-2.awsapprunner.com/api/channels/all', { // Update to ngrok URL later
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -54,7 +54,7 @@ export const useChannelStore = create<ChannelStoreType>((set) => ({
     try {
       const token = useAuthStore.getState().token;
       if (!token) throw new Error("No authentication token available");
-      const response = await fetch('http://localhost:5000/api/channels', { // Update to ngrok URL later
+      const response = await fetch('https://pkbk36mqmi.us-east-2.awsapprunner.com/api/channels', { // Update to ngrok URL later
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -64,7 +64,7 @@ export const useChannelStore = create<ChannelStoreType>((set) => ({
         throw new Error(`HTTP error! status: ${response.status}, message: ${errorData.message || 'Unknown error'}`);
       }
       const data = await response.json();
-      const allChannelsResponse = await fetch('http://localhost:5000/api/channels/all', {
+      const allChannelsResponse = await fetch('https://pkbk36mqmi.us-east-2.awsapprunner.com/api/channels/all', {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -97,7 +97,7 @@ export const useChannelStore = create<ChannelStoreType>((set) => ({
     try {
       const token = useAuthStore.getState().token;
       if (!token) throw new Error("No authentication token available");
-      const response = await fetch(`http://localhost:5000/api/channels/${channelId}/status`, { // Update to ngrok URL
+      const response = await fetch(`https://pkbk36mqmi.us-east-2.awsapprunner.com/api/channels/${channelId}/status`, { // Update to ngrok URL
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -123,7 +123,7 @@ export const useChannelStore = create<ChannelStoreType>((set) => ({
     try {
       const token = useAuthStore.getState().token;
       if (!token) throw new Error("No authentication token available");
-      const response = await fetch(`http://localhost:5000/api/channels/${channelId}/status`, { // Update to ngrok URL
+      const response = await fetch(`https://pkbk36mqmi.us-east-2.awsapprunner.com/${channelId}/status`, { // Update to ngrok URL
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
