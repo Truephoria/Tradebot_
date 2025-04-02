@@ -1,40 +1,80 @@
-// app/api/telegram/auth_settings/route.ts
-import { NextResponse } from 'next/server';
+// app/api/settings/route.ts
+import { NextRequest, NextResponse } from 'next/server';
 
 /**
- * Receives Telegram auth data and forwards it to your Python backend
- * Example request body:
- *  { user_id, apiId, apiHash, phoneNumber }
- *
- * Adjust the pythonEndpoint to match your Python service URL
+ * Proxy GET/POST requests to the Python backend.
+ * Example Python routes:
+ *    @app.route('/api/settings', methods=['GET'])
+ *    @app.route('/api/settings', methods=['POST'])
  */
-export async function POST(req: Request) {
+const PYTHON_BASE_URL = process.env.PYTHON_SERVER_URL || 'http://localhost:5000';
+
+export async function GET(req: NextRequest) {
   try {
-    // 1) Read the JSON body from the request
-    const body = await req.json();
-    
-    // 2) Forward that body to your Python backend
-    const pythonEndpoint = process.env.PYTHON_SERVER_URL || 'http://localhost:5000/user_sessions';
-    const response = await fetch(pythonEndpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+    // Forward the Bearer token if it exists
+    const authHeader = req.headers.get('authorization') || '';
+
+    const resp = await fetch(`${PYTHON_BASE_URL}/api/settings`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: authHeader,
+      },
     });
 
-    // 3) If the Python service fails, forward that error back to the client
-    if (!response.ok) {
-      const errorText = await response.text();
+    if (!resp.ok) {
+      // If Python returns an error, forward the response body
+      const errorText = await resp.text();
       return new NextResponse(JSON.stringify({ error: errorText }), {
-        status: response.status,
+        status: resp.status,
       });
     }
 
-    // 4) Otherwise, return the Python response as JSON
-    const data = await response.json();
+    // Return success as JSON
+    const data = await resp.json();
     return NextResponse.json(data);
-    
+
   } catch (error: any) {
-    console.error('Error in /api/telegram/auth_settings:', error);
-    return new NextResponse(JSON.stringify({ error: 'Internal Server Error' }), { status: 500 });
+    console.error('[GET /api/settings] Proxy error:', error);
+    return NextResponse.json(
+      { error: 'Internal Server Error in Next.js route.' },
+      { status: 500 }
+    );
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    // Read the JSON body from Next.js request
+    const body = await req.json();
+
+    // Forward the Bearer token if it exists
+    const authHeader = req.headers.get('authorization') || '';
+
+    const resp = await fetch(`${PYTHON_BASE_URL}/api/settings`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: authHeader,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!resp.ok) {
+      const errorText = await resp.text();
+      return new NextResponse(JSON.stringify({ error: errorText }), {
+        status: resp.status,
+      });
+    }
+
+    const data = await resp.json();
+    return NextResponse.json(data);
+
+  } catch (error: any) {
+    console.error('[POST /api/settings] Proxy error:', error);
+    return NextResponse.json(
+      { error: 'Internal Server Error in Next.js route.' },
+      { status: 500 }
+    );
   }
 }

@@ -39,15 +39,16 @@ CORS(
     app,
     origins=["https://main.d1bpy75hw1zntc.amplifyapp.com"],
     supports_credentials=True,
-    allow_headers=["Authorization", "Content-Type"]
-    
+    allow_headers=["Authorization", "Content-Type"],
+    methods=["GET", "POST", "PUT", "OPTIONS", ...]
 )
 
 socketio = SocketIO(
     app,
     cors_allowed_origins=["https://main.d1bpy75hw1zntc.amplifyapp.com"],
     async_mode="eventlet",
-    allow_headers=["Authorization", "Content-Type"]
+    allow_headers=["Authorization", "Content-Type"],
+    methods=["GET", "POST", "PUT", "OPTIONS", ...]
 )
 
 secret_key_value = os.getenv("SECRET_KEY", "fallback-secret")
