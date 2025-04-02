@@ -26,43 +26,37 @@ from openai import OpenAI
 from threading import Thread
 
 # ----------------------------------------------------------------------
-# ENV & FLASK SETUP (from app.py, plus load_dotenv)
+# ENV & FLASK SETUP
 # ----------------------------------------------------------------------
 load_dotenv()
 
 app = Flask(__name__)
 
-# Set up logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# Configure CORS explicitly for API routes
 CORS(
     app,
     origins=["https://main.d1bpy75hw1zntc.amplifyapp.com"],
     supports_credentials=True
 )
 
-# Configure SocketIO with CORS
 socketio = SocketIO(
     app,
     cors_allowed_origins=["https://main.d1bpy75hw1zntc.amplifyapp.com"],
     async_mode="eventlet"
 )
 
-# JWT Secret Handling (with fallback if environment variable is missing)
 secret_key_value = os.getenv("SECRET_KEY", "fallback-secret")
 app.config['SECRET_KEY'] = secret_key_value
 SECRET_KEY = secret_key_value
 
-# Bcrypt for password hashing
 bcrypt = Bcrypt(app)
 
-# Initialize OpenAI client
 openai_Client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # ----------------------------------------------------------------------
-# Initialize DynamoDB client and tables (from app.py)
+# DynamoDB Tables
 # ----------------------------------------------------------------------
 dynamodb = boto3.resource('dynamodb')
 
@@ -72,27 +66,20 @@ signals_table = dynamodb.Table('Signals')
 take_profits_table = dynamodb.Table('TakeProfits')
 settings_table = dynamodb.Table('Settings')
 trades_table = dynamodb.Table('Trades')
+user_sessions_table = dynamodb.Table(os.getenv("DYNAMODB_TABLE_NAME", "UserSessions"))
 
 # ----------------------------------------------------------------------
-# Additional DYNAMODB table for user session strings (from telegram_auth.py)
-# ----------------------------------------------------------------------
-DYNAMODB_TABLE_NAME = os.getenv("DYNAMODB_TABLE_NAME", "UserSessions")
-user_sessions_table = dynamodb.Table(DYNAMODB_TABLE_NAME)
-
-# ----------------------------------------------------------------------
-# Telegram Configuration (from both files)
-#   - Single-user approach from app.py
-#   - But also used for multi-user in telegram_auth.py
+# Telegram Configuration
 # ----------------------------------------------------------------------
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
-PHONE_NUMBER = os.getenv("PHONE_NUMBER")  # For single-user session approach
+PHONE_NUMBER = os.getenv("PHONE_NUMBER")
 
 if not API_ID or not API_HASH:
-    raise RuntimeError("Missing API_ID or API_HASH environment variables. Set them and restart.")
+    logger.warning("Default API_ID or API_HASH not set; relying on per-user credentials.")
 
 # ----------------------------------------------------------------------
-# Enums for status tracking (from app.py)
+# Enums
 # ----------------------------------------------------------------------
 class SignalStatus(Enum):
     IDLE = 0
@@ -107,56 +94,54 @@ class SettingStatus(Enum):
 settingStatus = SettingStatus.IDLE
 
 # ----------------------------------------------------------------------
-# HELPER FUNCTIONS FOR TELEGRAM AUTH (from telegram_auth.py)
+# Helper Functions
 # ----------------------------------------------------------------------
-def get_session_string_from_db(user_id: str) -> str:
-    """
-    Fetches the Telethon session string from DynamoDB for the given user_id.
-    Returns None if not found.
-    """
+def get_user_telegram_credentials(user_id: str) -> dict:
     try:
         response = user_sessions_table.get_item(Key={"user_id": user_id})
-        item = response.get("Item")
-        if item:
-            return item.get("session_string")  # The attribute in the DB
-        else:
-            return None
+        item = response.get("Item", {})
+        return {
+            "api_id": item.get("api_id"),
+            "api_hash": item.get("api_hash"),
+            "phone_number": item.get("phone_number"),
+            "session_string": item.get("session_string")
+        }
     except ClientError as e:
-        logger.error(f"DynamoDB get_item error: {e}")
-        return None
+        logger.error(f"DynamoDB get_item error for user {user_id}: {e}")
+        return {}
 
-def store_session_string_in_db(user_id: str, session_string: str):
-    """
-    Stores (or updates) the Telethon session string in DynamoDB for user_id.
-    """
+def store_session_string_in_db(user_id: str, session_string: str, api_id=None, api_hash=None, phone_number=None):
     try:
-        user_sessions_table.put_item(
-            Item={
-                "user_id": user_id,
-                "session_string": session_string,
-            }
-        )
-        logger.info(f"Stored session for user {user_id} in DynamoDB.")
+        item = {"user_id": user_id, "session_string": session_string}
+        if api_id:
+            item["api_id"] = str(api_id)
+        if api_hash:
+            item["api_hash"] = api_hash
+        if phone_number:
+            item["phone_number"] = phone_number
+        user_sessions_table.put_item(Item=item)
+        logger.info(f"Stored session/credentials for user {user_id} in DynamoDB.")
     except ClientError as e:
-        logger.error(f"DynamoDB put_item error: {e}")
+        logger.error(f"DynamoDB put_item error for user {user_id}: {e}")
 
 def get_client_for_user(user_id: str) -> TelegramClient:
-    """
-    Retrieves or creates a Telethon client for the given user_id, storing session in DynamoDB.
-    1) Attempt to load existing session string from DB
-    2) If none, create a blank session (user not authorized yet).
-    """
-    session_string = get_session_string_from_db(user_id)
+    creds = get_user_telegram_credentials(user_id)
+    session_string = creds.get("session_string")
+    api_id = creds.get("api_id", API_ID)
+    api_hash = creds.get("api_hash", API_HASH)
+    
+    if not api_id or not api_hash:
+        logger.error(f"No valid API credentials for user {user_id}. Using defaults if available.")
+        api_id = API_ID
+        api_hash = API_HASH
+    
     if session_string:
         logger.debug(f"Using existing session for user {user_id}")
-        return TelegramClient(StringSession(session_string), API_ID, API_HASH)
+        return TelegramClient(StringSession(session_string), api_id, api_hash)
     else:
         logger.debug(f"Creating new session for user {user_id}")
-        return TelegramClient(StringSession(None), API_ID, API_HASH)
+        return TelegramClient(StringSession(None), api_id, api_hash)
 
-# ----------------------------------------------------------------------
-# Database Initialization (from app.py)
-# ----------------------------------------------------------------------
 def init_db():
     default_settings = [
         ('allowedSymbols', 'EURUSD,GBPUSD,XAUUSD,USDJPY,US30'),
@@ -182,12 +167,9 @@ def init_db():
 
 def add_channels(channels):
     try:
-        # Delete existing channels
         response = channels_table.scan()
         for item in response.get('Items', []):
             channels_table.delete_item(Key={'channel_id': item['channel_id']})
-
-        # Add new channels
         for channel in channels:
             channels_table.put_item(Item={
                 'channel_id': channel['id'],
@@ -247,10 +229,8 @@ def get_current_settings():
         for setting in settings:
             key = setting['key']
             value = setting['value']
-            # Convert boolean strings to actual booleans
             if key in ['botEnabled', 'enableTrailingStop']:
                 value = (value.lower() == 'true')
-            # Convert certain numeric fields to floats
             elif key in ['maxDailyLoss', 'maxTradesPerDay', 'minimumRRR', 'riskValue']:
                 value = float(value)
             settings_dict[key] = value
@@ -294,11 +274,11 @@ def create_signal(signal_data):
         if field not in signal_data:
             raise ValueError(f"Missing required field: {field}")
 
-    signal_id = int(uuid.uuid4().int & (1 << 31) - 1)  # Generate a 31-bit integer ID
+    signal_id = int(uuid.uuid4().int & (1 << 31) - 1)
     created_at = datetime.utcnow().isoformat()
     signal_item = {
         'id': signal_id,
-        'channel': 1,  # Hardcoded for now
+        'channel': 1,
         'symbol': signal_data['symbol'].upper(),
         'entry_price': float(signal_data['entry_price']),
         'action': signal_data['action'].upper(),
@@ -327,7 +307,6 @@ def get_latest_signal():
             return None
         latest_signal = max(signals, key=lambda x: x['created_at'])
 
-        # Fetch take profits
         tp_response = take_profits_table.scan(
             FilterExpression='signal_id = :sid',
             ExpressionAttributeValues={':sid': latest_signal['id']}
@@ -357,7 +336,7 @@ def update_signal(channel_id, updates):
         if not signals:
             return False
 
-        signal = signals[0]  # Take the first signal for this channel
+        signal = signals[0]
         signal_id = signal['id']
 
         update_expression = 'SET '
@@ -384,15 +363,12 @@ def update_signal(channel_id, updates):
         )
 
         if 'take_profits' in updates:
-            # Delete existing take profits
             tp_response = take_profits_table.scan(
                 FilterExpression='signal_id = :sid',
                 ExpressionAttributeValues={':sid': signal_id}
             )
             for tp in tp_response.get('Items', []):
                 take_profits_table.delete_item(Key={'id': tp['id']})
-
-            # Add new take profits
             for tp in updates['take_profits']:
                 tp_id = int(uuid.uuid4().int & (1 << 31) - 1)
                 take_profits_table.put_item(Item={
@@ -408,7 +384,7 @@ def update_signal(channel_id, updates):
         return False
 
 # ----------------------------------------------------------------------
-# JWT Authentication Decorator (store user_id in Flask's g) from app.py
+# JWT Authentication Decorator
 # ----------------------------------------------------------------------
 def token_required(f):
     @wraps(f)
@@ -432,177 +408,14 @@ def token_required(f):
     return decorated
 
 # ----------------------------------------------------------------------
-# TELEGRAM AUTH ENDPOINTS (merged from telegram_auth.py)
-# ----------------------------------------------------------------------
-@app.route("/telegram/send_code", methods=["POST"])
-def send_code():
-    """
-    Expects JSON: { "user_id": "...", "phone_number": "..." }
-    1) Creates or retrieves a Telethon client for this user.
-    2) Calls client.send_code_request(phone_number).
-    3) The user later calls /verify_code with the code they received.
-    """
-    data = request.json or {}
-    user_id = data.get("user_id")
-    phone_number = data.get("phone_number")
-
-    if not user_id or not phone_number:
-        return jsonify({"status": "error", "message": "user_id and phone_number required"}), 400
-
-    async def _send_code():
-        client = get_client_for_user(user_id)
-        await client.connect()
-        try:
-            await client.send_code_request(phone_number)
-            logger.info(f"Sent code request to phone {phone_number} for user {user_id}")
-            return "ok"
-        except Exception as e:
-            logger.error(f"Error sending code: {e}")
-            return str(e)
-        finally:
-            await client.disconnect()
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    result = loop.run_until_complete(_send_code())
-
-    if result == "ok":
-        return jsonify({"status": "success", "message": "Code sent successfully"})
-    else:
-        return jsonify({"status": "error", "message": result}), 400
-
-@app.route("/telegram/verify_code", methods=["POST"])
-def verify_code():
-    """
-    Expects JSON: { "user_id": "...", "phone_number": "...", "code": "12345" }
-    1) sign_in(phone_number, code)
-    2) If success, store updated session_string in DB.
-    """
-    data = request.json or {}
-    user_id = data.get("user_id")
-    phone_number = data.get("phone_number")
-    code = data.get("code")
-
-    if not user_id or not phone_number or not code:
-        return jsonify({"status": "error", "message": "user_id, phone_number, and code are required"}), 400
-
-    async def _verify_code():
-        client = get_client_for_user(user_id)
-        await client.connect()
-        try:
-            await client.sign_in(phone_number, code)
-        except errors.SessionPasswordNeededError:
-            msg = "2FA password needed (use a separate endpoint to provide password)."
-            logger.warning(msg)
-            return msg
-        except Exception as e:
-            logger.error(f"Login error for user {user_id}: {e}")
-            return f"Login error: {e}"
-
-        if not await client.is_user_authorized():
-            msg = "Not authorized after sign_in"
-            logger.warning(msg)
-            return msg
-
-        # Save updated session
-        session_string = client.session.save()
-        store_session_string_in_db(user_id, session_string)
-        logger.info(f"User {user_id} is now authorized. Session stored.")
-        return "ok"
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    result = loop.run_until_complete(_verify_code())
-
-    if result == "ok":
-        return jsonify({"status": "success", "message": "User is now authorized"})
-    else:
-        return jsonify({"status": "error", "message": result}), 400
-
-@app.route("/telegram/verify_password", methods=["POST"])
-def verify_password():
-    """
-    If user has 2FA, you catch SessionPasswordNeededError above and ask them
-    to call this endpoint with their password.
-    Expects JSON: { "user_id": "...", "password": "..." }
-    """
-    data = request.json or {}
-    user_id = data.get("user_id")
-    password = data.get("password")
-
-    if not user_id or not password:
-        return jsonify({"status": "error", "message": "user_id and password required"}), 400
-
-    async def _verify_password():
-        client = get_client_for_user(user_id)
-        await client.connect()
-        try:
-            await client.sign_in(password=password)
-        except Exception as e:
-            logger.error(f"2FA password error for user {user_id}: {e}")
-            return f"2FA password error: {e}"
-
-        if not await client.is_user_authorized():
-            return "Still not authorized after 2FA password"
-
-        # Save the updated session
-        session_string = client.session.save()
-        store_session_string_in_db(user_id, session_string)
-        logger.info(f"User {user_id} authorized after 2FA password.")
-        return "ok"
-    
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    result = loop.run_until_complete(_verify_password())
-
-    if result == "ok":
-        return jsonify({"status": "success", "message": "Authorized after 2FA password"})
-    else:
-        return jsonify({"status": "error", "message": result}), 400
-
-@app.route("/telegram/test", methods=["POST"])
-def test_telegram():
-    """
-    Example: Expects JSON: { "user_id": "..." }
-    We'll load the user's session from DynamoDB, connect, and do something (get_me()).
-    """
-    data = request.json or {}
-    user_id = data.get("user_id")
-    if not user_id:
-        return jsonify({"status": "error", "message": "user_id required"}), 400
-
-    async def _do_something():
-        client = get_client_for_user(user_id)
-        await client.connect()
-        if not await client.is_user_authorized():
-            return "User not authorized!"
-        me = await client.get_me()
-        await client.disconnect()
-        return f"Hello, {me.first_name or 'Unknown'}!"
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    result = loop.run_until_complete(_do_something())
-
-    if result.startswith("User not authorized"):
-        return jsonify({"status": "error", "message": result}), 401
-    return jsonify({"status": "success", "message": result})
-
-# ----------------------------------------------------------------------
-# API ROUTES FROM app.py (Register, Login, etc.)
+# API Routes
 # ----------------------------------------------------------------------
 @app.route("/api/register", methods=["POST"])
 def register_user():
-    """
-    Creates a new user account.
-    - Returns user (id, name, email) + JWT token.
-    - user_id is an int, so it won't cause the Decimal problem in the response.
-    """
     name = request.json["name"]
     email = request.json["email"]
     password = request.json["password"]
     try:
-        # Check if user already exists
         response = users_table.scan(
             FilterExpression='email = :email',
             ExpressionAttributeValues={':email': email}
@@ -611,7 +424,6 @@ def register_user():
             logger.warning(f"Registration attempt with existing email: {email}")
             return jsonify({"error": "User already exists"}), 409
 
-        # Generate an integer user_id
         user_id = int(uuid.uuid4().int & (1 << 31) - 1)
         hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
 
@@ -629,11 +441,7 @@ def register_user():
 
         logger.info(f"User registered: {email}")
         return jsonify({
-            "user": {
-                "id": user_id,       # already int
-                "name": name,
-                "email": email
-            },
+            "user": {"id": user_id, "name": name, "email": email},
             "token": token
         })
     except Exception as e:
@@ -642,15 +450,9 @@ def register_user():
 
 @app.route("/api/login", methods=["POST"])
 def login_user():
-    """
-    Logs in an existing user.
-    - Must convert user['id'] from Decimal to int before returning JSON.
-    - Must not return hashed password in response.
-    """
     email = request.json["email"]
     password = request.json["password"]
     try:
-        # Find user by email
         response = users_table.scan(
             FilterExpression='email = :email',
             ExpressionAttributeValues={':email': email}
@@ -660,12 +462,10 @@ def login_user():
             logger.warning(f"Login attempt with non-existent email: {email}")
             return jsonify({"error": "Can not find user. Please sign up."}), 401
 
-        # Check bcrypt password
         if not bcrypt.check_password_hash(user['password'], password):
             logger.warning(f"Invalid password for email: {email}")
             return jsonify({"error": "Invalid email or password."}), 401
 
-        # Convert user['id'] from Decimal to int if necessary
         user_id = int(user['id']) if 'id' in user else None
         user_name = user.get('name', '')
         user_email = user['email']
@@ -677,11 +477,7 @@ def login_user():
 
         logger.info(f"User logged in: {email}")
         return jsonify({
-            "user": {
-                "id": user_id,
-                "name": user_name,
-                "email": user_email
-            },
+            "user": {"id": user_id, "name": user_name, "email": user_email},
             "token": token
         })
     except Exception as e:
@@ -691,11 +487,6 @@ def login_user():
 @app.route("/api/@me")
 @token_required
 def get_current_user():
-    """
-    Returns the currently authenticated user's info,
-    with 'id' converted from Decimal to int if necessary,
-    and omitting the password field.
-    """
     user_id = g.user_id
     response = users_table.get_item(Key={'id': user_id})
     user = response.get('Item')
@@ -703,18 +494,10 @@ def get_current_user():
         logger.warning(f"User not found for ID: {user_id}")
         return jsonify({"error": "User not found"}), 404
 
-    if isinstance(user['id'], (int, float)):
-        final_id = user['id']
-    else:
-        final_id = int(user['id'])
-
+    final_id = int(user['id']) if isinstance(user['id'], (int, float)) else user['id']
     logger.info(f"Current user retrieved: {user['email']}")
     return jsonify({
-        "user": {
-            "id": final_id,
-            "name": user["name"],
-            "email": user["email"]
-        }
+        "user": {"id": final_id, "name": user["name"], "email": user["email"]}
     })
 
 @app.route('/api/channels/all', methods=['GET'])
@@ -736,22 +519,17 @@ def get_channels_endpoint():
         })
     except Exception as e:
         logger.error(f"Error in get_channels_endpoint: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/channels', methods=['GET'])
+@token_required
 def add_channels_endpoint():
-    """
-    NOTE: The name 'add_channels_endpoint' is a bit confusing
-    since it's a GET that fetches channel info from Telegram.
-    But we'll keep it as is to avoid breaking the front end.
-    """
     try:
+        user_id = g.user_id
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        channels = loop.run_until_complete(fetch_subscribed_channels())
+        channels = loop.run_until_complete(fetch_subscribed_channels(user_id))
+        loop.close()
         channels = add_channels(channels)
         return jsonify({
             'status': 'success',
@@ -760,10 +538,7 @@ def add_channels_endpoint():
         })
     except Exception as e:
         logger.error(f"Error in add_channels_endpoint: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': f"Failed to fetch channels: {str(e)}"
-        }), 500
+        return jsonify({'status': 'error', 'message': f"Failed to fetch channels: {str(e)}"}), 500
 
 @app.route('/api/channels/<string:channel_id>/status', methods=['PUT'])
 def update_channel_status_endpoint(channel_id):
@@ -810,10 +585,7 @@ def update_settings():
         })
     except Exception as e:
         logger.error(f"Error in update_settings: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': f'Failed to update settings: {str(e)}'
-        }), 500
+        return jsonify({'status': 'error', 'message': f'Failed to update settings: {str(e)}'}), 500
 
 @app.route('/api/signal', methods=['POST'])
 @token_required
@@ -822,10 +594,7 @@ def add_signal():
         data = request.get_json()
         if not data:
             logger.warning("No data provided in add_signal")
-            return jsonify({
-                'status': 'error',
-                'message': 'No data provided'
-            }), 400
+            return jsonify({'status': 'error', 'message': 'No data provided'}), 400
         signal = create_signal(data)
         return jsonify({
             'status': 'success',
@@ -834,16 +603,10 @@ def add_signal():
         }), 201
     except ValueError as e:
         logger.error(f"ValueError in add_signal: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 400
+        return jsonify({'status': 'error', 'message': str(e)}), 400
     except Exception as e:
         logger.error(f"Error in add_signal: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': f'Failed to create signal: {str(e)}'
-        }), 500
+        return jsonify({'status': 'error', 'message': f'Failed to create signal: {str(e)}'}), 500
 
 @app.route('/api/signal', methods=['GET'])
 @token_required
@@ -851,10 +614,7 @@ def get_signal():
     try:
         signal = get_latest_signal()
         if signal:
-            return jsonify({
-                'status': 'success',
-                'signal': signal
-            })
+            return jsonify({'status': 'success', 'signal': signal})
         return jsonify({
             'status': 'success',
             'message': 'No active signals found',
@@ -862,10 +622,7 @@ def get_signal():
         })
     except Exception as e:
         logger.error(f"Error in get_signal: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e.__str__())
-        }), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/signal/history', methods=['GET'])
 def get_signal_history():
@@ -876,7 +633,6 @@ def get_signal_history():
         action = request.args.get('action')
         channel_id = request.args.get('channel')
 
-        # Scan signals with filters
         filter_expression = []
         expression_attribute_values = {}
         if symbol:
@@ -898,13 +654,11 @@ def get_signal_history():
         signals = response.get('Items', [])
         signals.sort(key=lambda x: x['created_at'], reverse=True)
 
-        # Pagination
         total = len(signals)
         start = (page - 1) * per_page
         end = start + per_page
         paginated_signals = signals[start:end]
 
-        # Fetch take profits for each signal
         signal_list = []
         for signal in paginated_signals:
             tp_response = take_profits_table.scan(
@@ -932,10 +686,7 @@ def get_signal_history():
         })
     except Exception as e:
         logger.error(f"Error in get_signal_history: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/signal/<int:channel_id>', methods=['GET'])
 def get_channel_by_id(channel_id):
@@ -946,10 +697,7 @@ def get_channel_by_id(channel_id):
         )
         signal = response.get('Items', [None])[0]
         if not signal:
-            return jsonify({
-                'status': 'error',
-                'message': 'Signal not found'
-            }), 404
+            return jsonify({'status': 'error', 'message': 'Signal not found'}), 404
 
         tp_response = take_profits_table.scan(
             FilterExpression='signal_id = :sid',
@@ -972,10 +720,7 @@ def get_channel_by_id(channel_id):
         })
     except Exception as e:
         logger.error(f"Error in get_channel_by_id: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': str(e)
-        }), 500
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/signal/<int:channel_id>', methods=['PUT', 'PATCH'])
 def update_signal_endpoint(channel_id):
@@ -983,16 +728,10 @@ def update_signal_endpoint(channel_id):
         data = request.get_json()
         if not data:
             logger.warning("No data provided in update_signal_endpoint")
-            return jsonify({
-                'status': 'error',
-                'message': 'No data provided'
-            }), 400
+            return jsonify({'status': 'error', 'message': 'No data provided'}), 400
         if 'action' in data and data['action'].upper() not in ['BUY', 'SELL']:
             logger.warning(f"Invalid action provided: {data['action']}")
-            return jsonify({
-                'status': 'error',
-                'message': 'Action must be either BUY or SELL'
-            }), 400
+            return jsonify({'status': 'error', 'message': 'Action must be either BUY or SELL'}), 400
         if update_signal(channel_id, data):
             response = signals_table.scan(
                 FilterExpression='channel = :cid',
@@ -1017,16 +756,10 @@ def update_signal_endpoint(channel_id):
                     'created_at': signal['created_at']
                 }
             })
-        return jsonify({
-            'status': 'error',
-            'message': 'Signal not found'
-        }), 404
+        return jsonify({'status': 'error', 'message': 'Signal not found'}), 404
     except Exception as e:
         logger.error(f"Error in update_signal_endpoint: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': f'Failed to update signal: {str(e)}'
-        }), 500
+        return jsonify({'status': 'error', 'message': f'Failed to update signal: {str(e)}'}), 500
 
 @app.route('/api/settings/<string:key>', methods=['POST', 'PUT'])
 @token_required
@@ -1053,10 +786,7 @@ def update_signal_setting(key):
             })
     except Exception as e:
         logger.error(f"Error in update_signal_setting: {str(e)}")
-        return jsonify({
-            'status': 'error',
-            'message': f'Failed to update setting: {str(e)}'
-        }), 500
+        return jsonify({'status': 'error', 'message': f'Failed to update setting: {str(e)}'}), 500
 
 def parse_trading_signal(signal_text: str) -> dict:
     system_prompt = """Extract trading signal details from the given text and return as JSON with the following structure:
@@ -1084,19 +814,15 @@ def parse_trading_signal(signal_text: str) -> dict:
     except Exception as e:
         return {"error": str(e)}
 
-async def fetch_subscribed_channels():
-    """
-    Attempts to fetch the subscribed channels from a single "session"
-    using PHONE_NUMBER if needed.
-    # Recommendation: For multi-user scenarios, see 'telegram_auth.py' approach
-    """
-    async with TelegramClient('session', API_ID, API_HASH) as telegram_Client:
-        if not await telegram_Client.is_user_authorized():
-            raise Exception("Telegram client not authorized. Please pre-authorize the session.")
-        dialogs = await telegram_Client.get_dialogs()
+async def fetch_subscribed_channels(user_id: str):
+    client = get_client_for_user(user_id)
+    async with client:
+        if not await client.is_user_authorized():
+            raise Exception("Telegram client not authorized for this user.")
+        dialogs = await client.get_dialogs()
         return [
-            {"name": dialog.entity.title, "id": str(dialog.entity.id)}
-            for dialog in dialogs if dialog.is_channel
+            {"name": d.entity.title, "id": str(d.entity.id)}
+            for d in dialogs if d.is_channel
         ]
 
 @app.route('/api/monitor', methods=['POST'])
@@ -1108,9 +834,10 @@ def monitor_channel():
             return jsonify({"status": "error", "message": "channel_id is required"}), 400
 
         channels = [int(x) for x in data.get("channel_id")]
-        logger.info(f"Monitoring channel: {channels}")
+        user_id = g.user_id
+        logger.info(f"Monitoring channel: {channels} for user {user_id}")
 
-        thread = Thread(target=start_monitoring, args=(channels,))
+        thread = Thread(target=start_monitoring, args=(channels, user_id))
         thread.daemon = True
         thread.start()
 
@@ -1119,42 +846,36 @@ def monitor_channel():
         logger.error(f"Error in monitor_channel: {str(e)}")
         return jsonify({"status": "error", "message": f"Failed to start monitoring: {str(e)}"}), 500
 
-def start_monitoring(channels):
+def start_monitoring(channels, user_id: str):
     async def monitor(channels):
-        logger.info(f"Starting monitoring for channels: {channels}")
-        try:
-            async with TelegramClient('session', API_ID, API_HASH) as telegram_Client:
-                if not await telegram_Client.is_user_authorized():
-                    logger.error(
-                        "Telegram client is not authorized. "
-                        "Please create a valid session beforehand. Skipping monitor."
-                    )
-                    return
+        logger.info(f"Starting monitoring for channels: {channels} for user {user_id}")
+        client = get_client_for_user(user_id)
+        async with client:
+            if not await client.is_user_authorized():
+                logger.error(f"Telegram client not authorized for user {user_id}; skipping monitor.")
+                return
 
-                @telegram_Client.on(events.NewMessage(chats=channels))
-                async def handler(event):
-                    chat = await event.get_chat()
-                    channel_id = chat.id
-                    message_text = event.message.message
-                    logger.info(f"Received message from channel {channel_id}: {message_text}")
-                    if "buy" in message_text.lower() or "sell" in message_text.lower():
-                        global signalStatus
-                        signalStatus = SignalStatus.UPDATED
-                        parsed_signal = parse_trading_signal(message_text)
-                        update_signal(1, parsed_signal)
-                        logger.info(f"Received signal from channel {channel_id}: {parsed_signal}")
-                        socketio.emit('new_signal', parsed_signal)
+            @client.on(events.NewMessage(chats=channels))
+            async def handler(event):
+                chat = await event.get_chat()
+                channel_id = chat.id
+                message_text = event.message.message
+                logger.info(f"Received message from channel {channel_id}: {message_text}")
+                if "buy" in message_text.lower() or "sell" in message_text.lower():
+                    global signalStatus
+                    signalStatus = SignalStatus.UPDATED
+                    parsed_signal = parse_trading_signal(message_text)
+                    update_signal(1, parsed_signal)
+                    logger.info(f"Received signal from channel {channel_id}: {parsed_signal}")
+                    socketio.emit('new_signal', parsed_signal)
 
-                while True:
-                    try:
-                        await telegram_Client.run_until_disconnected()
-                        logger.info("Telegram client disconnected; attempting to reconnect...")
-                    except Exception as e:
-                        logger.error(f"Telegram client error: {str(e)}")
-                    await asyncio.sleep(5)
-
-        except Exception as e:
-            logger.error(f"Monitoring setup failed: {str(e)}")
+            while True:
+                try:
+                    await client.run_until_disconnected()
+                    logger.info("Telegram client disconnected; attempting reconnect...")
+                except Exception as e:
+                    logger.error(f"Telegram client error: {str(e)}")
+                await asyncio.sleep(5)
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -1165,7 +886,6 @@ def start_monitoring(channels):
     finally:
         loop.close()
 
-# Variables used in /mt/accountinfo
 is_first = True
 
 @app.route('/mt/accountinfo', methods=['POST'])
@@ -1193,14 +913,12 @@ def mt_account():
     start_time = datetime.strptime(current_settings['tradingHoursStart'], "%H:%M").time()
     end_time = datetime.strptime(current_settings['tradingHoursEnd'], "%H:%M").time()
 
-    # If only settings changed
     if settingStatus == SettingStatus.UPDATED and signalStatus != SignalStatus.UPDATED:
         settingStatus = SettingStatus.IDLE
         setting_data = current_settings
         logger.info("Setting updated!")
         return jsonify({"signal": signal_data, "setting": setting_data}), 202
 
-    # If within trading hours, bot is enabled, we have a latest signal, and symbol is allowed
     if (start_time <= now <= end_time
             and current_settings['botEnabled']
             and current_signal
@@ -1300,7 +1018,182 @@ def execute_trade():
         return jsonify({'status': 'error', 'message': f'Failed to queue trade: {str(e)}'}), 500
 
 # ----------------------------------------------------------------------
-# Main (Use only one run block from app.py, remove the second from telegram_auth.py)
+# Telegram Auth Endpoints
+# ----------------------------------------------------------------------
+@app.route("/api/telegram/auth_settings", methods=["GET"])
+@token_required
+def get_telegram_auth():
+    user_id = g.user_id
+    creds = get_user_telegram_credentials(user_id)
+    if not creds.get("api_id"):
+        return jsonify({"status": "success", "credentials": {}}), 200
+    return jsonify({
+        "status": "success",
+        "credentials": {
+            "apiId": creds["api_id"],
+            "apiHash": creds["api_hash"],
+            "phoneNumber": creds["phone_number"]
+        }
+    }), 200
+
+@app.route("/api/telegram/auth_settings", methods=["POST"])
+@token_required
+def save_telegram_auth():
+    user_id = g.user_id
+    data = request.json or {}
+    api_id = data.get("apiId")
+    api_hash = data.get("apiHash")
+    phone_number = data.get("phoneNumber")
+
+    if not api_id or not api_hash or not phone_number:
+        return jsonify({"error": "Missing Telegram credentials"}), 400
+
+    existing_creds = get_user_telegram_credentials(user_id)
+    session_string = existing_creds.get("session_string", "")
+    store_session_string_in_db(user_id, session_string, api_id, api_hash, phone_number)
+    return jsonify({"status": "success", "message": "Telegram auth updated"}), 200
+
+@app.route("/telegram/send_code", methods=["POST"])
+@token_required
+def send_code():
+    data = request.json or {}
+    user_id = g.user_id
+    phone_number = data.get("phone_number")
+
+    if not phone_number:
+        return jsonify({"status": "error", "message": "phone_number required"}), 400
+
+    async def _send_code():
+        client = get_client_for_user(user_id)
+        await client.connect()
+        try:
+            await client.send_code_request(phone_number)
+            logger.info(f"Sent code request to phone {phone_number} for user {user_id}")
+            return "ok"
+        except Exception as e:
+            logger.error(f"Error sending code: {e}")
+            return str(e)
+        finally:
+            await client.disconnect()
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    result = loop.run_until_complete(_send_code())
+    loop.close()
+
+    if result == "ok":
+        return jsonify({"status": "success", "message": "Code sent successfully"})
+    else:
+        return jsonify({"status": "error", "message": result}), 400
+
+@app.route("/telegram/verify_code", methods=["POST"])
+@token_required
+def verify_code():
+    data = request.json or {}
+    user_id = g.user_id
+    phone_number = data.get("phone_number")
+    code = data.get("code")
+
+    if not phone_number or not code:
+        return jsonify({"status": "error", "message": "phone_number and code required"}), 400
+
+    async def _verify_code():
+        client = get_client_for_user(user_id)
+        await client.connect()
+        try:
+            await client.sign_in(phone_number, code)
+        except errors.SessionPasswordNeededError:
+            msg = "2FA password needed."
+            logger.warning(msg)
+            return msg
+        except Exception as e:
+            logger.error(f"Login error for user {user_id}: {e}")
+            return f"Login error: {e}"
+
+        if not await client.is_user_authorized():
+            msg = "Not authorized after sign_in"
+            logger.warning(msg)
+            return msg
+
+        session_string = client.session.save()
+        creds = get_user_telegram_credentials(user_id)
+        store_session_string_in_db(user_id, session_string, creds.get("api_id"), creds.get("api_hash"), phone_number)
+        logger.info(f"User {user_id} is now authorized. Session stored.")
+        return "ok"
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    result = loop.run_until_complete(_verify_code())
+    loop.close()
+
+    if result == "ok":
+        return jsonify({"status": "success", "message": "User is now authorized"})
+    else:
+        return jsonify({"status": "error", "message": result}), 400
+
+@app.route("/telegram/verify_password", methods=["POST"])
+@token_required
+def verify_password():
+    data = request.json or {}
+    user_id = g.user_id
+    password = data.get("password")
+
+    if not password:
+        return jsonify({"status": "error", "message": "password required"}), 400
+
+    async def _verify_password():
+        client = get_client_for_user(user_id)
+        await client.connect()
+        try:
+            await client.sign_in(password=password)
+        except Exception as e:
+            logger.error(f"2FA password error for user {user_id}: {e}")
+            return f"2FA password error: {e}"
+
+        if not await client.is_user_authorized():
+            return "Still not authorized after 2FA password"
+
+        session_string = client.session.save()
+        creds = get_user_telegram_credentials(user_id)
+        store_session_string_in_db(user_id, session_string, creds.get("api_id"), creds.get("api_hash"), creds.get("phone_number"))
+        logger.info(f"User {user_id} authorized after 2FA password.")
+        return "ok"
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    result = loop.run_until_complete(_verify_password())
+    loop.close()
+
+    if result == "ok":
+        return jsonify({"status": "success", "message": "Authorized after 2FA password"})
+    else:
+        return jsonify({"status": "error", "message": result}), 400
+
+@app.route("/telegram/test", methods=["POST"])
+@token_required
+def test_telegram():
+    user_id = g.user_id
+
+    async def _do_something():
+        client = get_client_for_user(user_id)
+        await client.connect()
+        if not await client.is_user_authorized():
+            return "User not authorized!"
+        me = await client.get_me()
+        await client.disconnect()
+        return f"Hello, {me.first_name or 'Unknown'}!"
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    result = loop.run_until_complete(_do_something())
+    loop.close()
+
+    if result.startswith("User not authorized"):
+        return jsonify({"status": "error", "message": result}), 401
+    return jsonify({"status": "success", "message": result})
+
+# ----------------------------------------------------------------------
+# Main
 # ----------------------------------------------------------------------
 if __name__ == '__main__':
     try:
