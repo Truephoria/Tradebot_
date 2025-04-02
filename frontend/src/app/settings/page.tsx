@@ -164,7 +164,7 @@ const SettingsPage: React.FC = () => {
       // Do whatever you need to do to update/handle the credentials
       // e.g., await updateSettingsInYourStore(values);
       console.log('Auth form submitted:', values);
-      toast.success('Authentication credentials saved');
+      if(toast.success('Authentication credentials saved')){console.log('Auth creds saved')};
     } catch (error) {
       console.log('Error updating credentials:', error);
       toast.error('Error updating credentials');
