@@ -191,6 +191,7 @@ const SettingsPage: React.FC = () => {
     }
   };
 
+
   // Auth form submit (Telegram settings)
   const onAuthSubmit = async (values: z.infer<typeof authFormSchema>) => {
     try {

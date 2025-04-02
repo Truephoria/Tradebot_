@@ -1093,8 +1093,10 @@ def get_telegram_auth():
 @app.route('/api/telegram/auth_settings', methods=['POST'])
 @token_required
 def update_telegram_auth_settings():
-    user_id = g.user_id  # Use the user_id from the JWT token
-    
+    user_id = g.user_id
+    logger.info(f"Updating Telegram settings for user_id: {user_id}")
+    logger.info(f"Request data: {request.get_json()}")
+
     if not user_id:
         return jsonify({'error': 'User ID not found in token'}), 401
 
@@ -1110,7 +1112,6 @@ def update_telegram_auth_settings():
         return jsonify({'error': 'Missing required fields (apiId, apiHash, phoneNumber)'}), 400
 
     try:
-        # Update the UserSessions table in DynamoDB
         user_sessions_table.update_item(
             Key={'user_id': user_id},
             UpdateExpression='SET apiId = :apiId, apiHash = :apiHash, phoneNumber = :phoneNumber',
@@ -1121,6 +1122,7 @@ def update_telegram_auth_settings():
             },
             ReturnValues='UPDATED_NEW'
         )
+        logger.info(f"Successfully updated Telegram settings for user_id: {user_id}")
         return jsonify({'status': 'success', 'message': 'Telegram auth settings updated'}), 200
     except ClientError as e:
         logger.error(f"Error updating Telegram auth settings: {e}")
