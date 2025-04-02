@@ -154,29 +154,59 @@ def get_user_telegram_credentials(user_id: str) -> dict:
         logger.error(f"DynamoDB get_item error for user {user_id}: {e}")
         return {}
 
+async def is_session_valid(client: TelegramClient) -> bool:
+    """
+    Check if the Telegram session is still valid by attempting to get the user's info.
+    """
+    try:
+        await client.connect()
+        await client.get_me()  # Simple test to verify authorization
+        return True
+    except (errors.SessionRevokedError, errors.AuthKeyUnregisteredError, errors.UnauthorizedError):
+        logger.warning("Session is invalid or revoked.")
+        return False
+    except Exception as e:
+        logger.error(f"Error checking session validity: {str(e)}")
+        return False
+    finally:
+        await client.disconnect()
+
 def get_client_for_user(user_id: str) -> TelegramClient:
     """
     Returns a configured Telethon client for the given user_id.
-    We prefer user-specific API_ID, API_HASH, and session if available;
-    otherwise fall back to global environment variables if needed.
+    Regenerates the session if it’s invalid or missing.
     """
     creds = get_user_telegram_credentials(user_id)
     session_string = creds.get("session_string")
-    # Notice we pull from 'API_ID', 'API_HASH' in the item, matching the updated keys
     api_id = creds.get("API_ID", API_ID)
     api_hash = creds.get("API_HASH", API_HASH)
-    
-    if not api_id or not api_hash:
-        logger.error(f"No valid API credentials for user {user_id}. Using defaults if available.")
-        api_id = API_ID
-        api_hash = API_HASH
-    
+    phone_number = creds.get("PHONE_NUMBER")
+
+    if not api_id or not api_hash or not phone_number:
+        logger.error(f"No valid API credentials or phone number for user {user_id}.")
+        raise ValueError("Missing Telegram credentials for user.")
+
+    client = None
     if session_string:
         logger.debug(f"Using existing session for user {user_id}")
-        return TelegramClient(StringSession(session_string), api_id, api_hash)
-    else:
+        client = TelegramClient(StringSession(session_string), api_id, api_hash)
+        # Check if the session is valid
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        is_valid = loop.run_until_complete(is_session_valid(client))
+        loop.close()
+        if not is_valid:
+            logger.info(f"Session invalid for user {user_id}. Regenerating...")
+            session_string = None  # Force regeneration
+
+    if not session_string:
         logger.debug(f"Creating new session for user {user_id}")
-        return TelegramClient(StringSession(None), api_id, api_hash)
+        client = TelegramClient(StringSession(), api_id, api_hash)
+        # We don’t sign in here; that’s handled by /telegram/send_code and /verify_code
+        # Store the initial empty session string to mark it as pending authentication
+        store_session_string_in_db(user_id, client.session.save(), api_id, api_hash, phone_number)
+
+    return client
 
 # ----------------------------------------------------------------------
 # DB INIT & GENERAL HELPERS
@@ -901,32 +931,38 @@ def start_monitoring(channels, user_id: str):
     async def monitor(channels):
         logger.info(f"Starting monitoring for channels: {channels} for user {user_id}")
         client = get_client_for_user(user_id)
-        async with client:
+        
+        async def ensure_authorized():
+            await client.connect()
             if not await client.is_user_authorized():
-                logger.error(f"Telegram client not authorized for user {user_id}; skipping monitor.")
-                return
+                logger.error(f"Telegram client not authorized for user {user_id}.")
+                raise Exception("Client not authorized. Please re-authenticate.")
+        
+        await ensure_authorized()
 
-            @client.on(events.NewMessage(chats=channels))
-            async def handler(event):
-                chat = await event.get_chat()
-                channel_id = chat.id
-                message_text = event.message.message
-                logger.info(f"Received message from channel {channel_id}: {message_text}")
-                if "buy" in message_text.lower() or "sell" in message_text.lower():
-                    global signalStatus
-                    signalStatus = SignalStatus.UPDATED
-                    parsed_signal = parse_trading_signal(message_text)
-                    update_signal(1, parsed_signal)
-                    logger.info(f"Received signal from channel {channel_id}: {parsed_signal}")
-                    socketio.emit('new_signal', parsed_signal)
+        @client.on(events.NewMessage(chats=channels))
+        async def handler(event):
+            chat = await event.get_chat()
+            channel_id = chat.id
+            message_text = event.message.message
+            logger.info(f"Received message from channel {channel_id}: {message_text}")
+            if "buy" in message_text.lower() or "sell" in message_text.lower():
+                global signalStatus
+                signalStatus = SignalStatus.UPDATED
+                parsed_signal = parse_trading_signal(message_text)
+                update_signal(1, parsed_signal)
+                logger.info(f"Received signal from channel {channel_id}: {parsed_signal}")
+                socketio.emit('new_signal', parsed_signal)
 
-            while True:
-                try:
-                    await client.run_until_disconnected()
-                    logger.info("Telegram client disconnected; attempting reconnect...")
-                except Exception as e:
-                    logger.error(f"Telegram client error: {str(e)}")
-                await asyncio.sleep(5)
+        while True:
+            try:
+                await client.run_until_disconnected()
+                logger.info("Telegram client disconnected; attempting reconnect...")
+                client = get_client_for_user(user_id)  # Get a new client with a fresh session
+                await ensure_authorized()
+            except Exception as e:
+                logger.error(f"Telegram client error: {str(e)}")
+            await asyncio.sleep(5)
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -936,7 +972,6 @@ def start_monitoring(channels, user_id: str):
         logger.info("Monitoring stopped by user")
     finally:
         loop.close()
-
 is_first = True
 
 @app.route('/mt/accountinfo', methods=['POST'])
@@ -1193,10 +1228,11 @@ def verify_code():
             logger.warning(msg)
             return msg
 
+        # Save the new session string after successful sign-in
         session_string = client.session.save()
         creds = get_user_telegram_credentials(user_id)
         store_session_string_in_db(user_id, session_string, creds.get("API_ID"), creds.get("API_HASH"), phone_number)
-        logger.info(f"User {user_id} is now authorized. Session stored.")
+        logger.info(f"User {user_id} is now authorized. New session stored.")
         return "ok"
 
     loop = asyncio.new_event_loop()
@@ -1208,7 +1244,7 @@ def verify_code():
         return jsonify({"status": "success", "message": "User is now authorized"})
     else:
         return jsonify({"status": "error", "message": result}), 400
-
+    
 @app.route("/telegram/verify_password", methods=["POST"])
 def verify_password():
     data = request.json or {}
