@@ -13,10 +13,12 @@ export const initChannelListState: ChannelListType = {
   error: null,
 };
 
-// Initialize SocketIO client
-const socket = io('https://pkbk36mqmi.us-east-2.awsapprunner.com', { // Update to your ngrok URL later
+
+
+
+const socket = io('https://pkbk36mqmi.us-east-2.awsapprunner.com', {
   reconnection: true,
-  transports: ['websocket'],
+  withCredentials: true, // Add this to support cookies/sessions
 });
 
 export const useChannelStore = create<ChannelStoreType>((set) => ({

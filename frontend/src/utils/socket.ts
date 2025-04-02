@@ -8,7 +8,9 @@ export const initializeSocket = () => {
     return;
   }
 
-  socket = io(process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000");
+  socket = io("https://pkbk36mqmi.us-east-2.awsapprunner.com", {
+    withCredentials: true,
+  });
 
   socket.on("connect_error", (error) => {
     console.error("Connection error:", error);
