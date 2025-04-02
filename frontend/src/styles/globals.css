@@ -1,10 +1,30 @@
 @import "tailwindcss";
 
+/* 
+  Default (no theme class) — you can set a default here if needed.
+  Or you can leave it empty and rely entirely on the .light or .dark classes.
+*/
 :root {
   --background: #ffffff;
   --foreground: #171717;
 }
 
+/* If user picks "light", the ThemeProvider sets <html class="light"> */
+:root.light {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+/* If user picks "dark", the ThemeProvider sets <html class="dark"> */
+:root.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+}
+
+/* 
+  Optional: You had @theme inline {...}, but that's not standard CSS. 
+  If you're using a plugin that recognizes @theme, keep it. Otherwise, remove.
+*/
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -12,13 +32,7 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
+/* Apply the variables to the body */
 body {
   background: var(--background);
   color: var(--foreground);

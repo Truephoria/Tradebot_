@@ -1,15 +1,19 @@
 "use client";
 
-import { useTheme } from './ThemeProvider';
-import { Button } from './ui/button';
-import { Sun, Moon, Laptop } from 'lucide-react';
+import { useTheme } from "./ThemeProvider";
+import { Button } from "./ui/button";
+import { Sun, Moon, Laptop } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from './ui/dropdown-menu';
+} from "./ui/dropdown-menu";
 
+/**
+ * A dropdown to choose between 'light', 'dark', or 'system' theme.
+ * Depends on useTheme() from the ThemeProvider context.
+ */
 export function ThemeSwitcher() {
   const { theme, setTheme } = useTheme();
 
@@ -17,9 +21,10 @@ export function ThemeSwitcher() {
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="outline" size="icon" className="rounded-full">
-          {theme === 'light' ? (
+          {/* Show icon based on current theme */}
+          {theme === "light" ? (
             <Sun className="h-[1.2rem] w-[1.2rem]" />
-          ) : theme === 'dark' ? (
+          ) : theme === "dark" ? (
             <Moon className="h-[1.2rem] w-[1.2rem]" />
           ) : (
             <Laptop className="h-[1.2rem] w-[1.2rem]" />
@@ -27,20 +32,36 @@ export function ThemeSwitcher() {
           <span className="sr-only">Toggle theme</span>
         </Button>
       </DropdownMenuTrigger>
+
       <DropdownMenuContent align="end">
-        <DropdownMenuItem onClick={() => setTheme('light')}>
+        {/* LIGHT option */}
+        <DropdownMenuItem
+          onClick={() => setTheme("light")}
+          // Optional highlight if current theme is "light"
+          className={theme === "light" ? "bg-gray-100 dark:bg-gray-700" : ""}
+        >
           <Sun className="mr-2 h-4 w-4" />
           <span>Light</span>
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => setTheme('dark')}>
+
+        {/* DARK option */}
+        <DropdownMenuItem
+          onClick={() => setTheme("dark")}
+          className={theme === "dark" ? "bg-gray-100 dark:bg-gray-700" : ""}
+        >
           <Moon className="mr-2 h-4 w-4" />
           <span>Dark</span>
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => setTheme('system')}>
+
+        {/* SYSTEM option */}
+        <DropdownMenuItem
+          onClick={() => setTheme("system")}
+          className={theme === "system" ? "bg-gray-100 dark:bg-gray-700" : ""}
+        >
           <Laptop className="mr-2 h-4 w-4" />
           <span>System</span>
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    );
-  }
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}

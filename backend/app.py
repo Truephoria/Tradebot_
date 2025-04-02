@@ -532,15 +532,22 @@ def get_channels_endpoint():
 
 @app.route('/api/channels', methods=['GET'])
 def add_channels_endpoint():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    channels = loop.run_until_complete(fetch_subscribed_channels())
-    channels = add_channels(channels)
-    return jsonify({
-        'status': 'success',
-        'count': len(channels),
-        'channels': channels
-    })
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        channels = loop.run_until_complete(fetch_subscribed_channels())
+        channels = add_channels(channels)
+        return jsonify({
+            'status': 'success',
+            'count': len(channels),
+            'channels': channels
+        })
+    except Exception as e:
+        logger.error(f"Error in add_channels_endpoint: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': f"Failed to fetch channels: {str(e)}"
+        }), 500
 
 @app.route('/api/channels/<string:channel_id>/status', methods=['PUT'])
 def update_channel_status_endpoint(channel_id):
@@ -864,10 +871,7 @@ def parse_trading_signal(signal_text: str) -> dict:
 async def fetch_subscribed_channels():
     async with TelegramClient('session', API_ID, API_HASH) as telegram_Client:
         if not await telegram_Client.is_user_authorized():
-            logger.info(f"Authorizing Telegram client with phone number: {PHONE_NUMBER}")
-            await telegram_Client.send_code_request(PHONE_NUMBER)
-            code = input(f"Enter the code sent to {PHONE_NUMBER}: ")
-            await telegram_Client.sign_in(PHONE_NUMBER, code)
+            raise Exception("Telegram client not authorized. Please pre-authorize the session.")
         dialogs = await telegram_Client.get_dialogs()
         return [
             {"name": dialog.entity.title, "id": str(dialog.entity.id)}
