@@ -18,7 +18,7 @@ interface Settings {
   allowedSymbols: string;
   botEnabled: boolean;
   // New Telegram settings
-  apiId: number;
+  apiId: string;
   apiHash: string;
   phoneNumber: string;
 }
