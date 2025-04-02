@@ -1090,27 +1090,41 @@ def get_telegram_auth():
         }
     }), 200
 
-@app.route("/api/telegram/auth_settings", methods=["POST"])
+@app.route('/api/telegram/auth_settings', methods=['POST'])
 @token_required
-def save_telegram_auth():
-    user_id = g.user_id  # Get user_id from JWT token
-    data = request.json or {}
-    api_id = data.get("apiId")
-    api_hash = data.get("apiHash")
-    phone_number = data.get("phoneNumber")
+def update_telegram_auth_settings():
+    user_id = g.user_id  # Use the user_id from the JWT token
+    
+    if not user_id:
+        return jsonify({'error': 'User ID not found in token'}), 401
 
-    if not api_id or not api_hash or not phone_number:
-        return jsonify({"error": "Missing Telegram credentials"}), 400
+    data = request.get_json()
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
+
+    api_id = data.get('apiId')
+    api_hash = data.get('apiHash')
+    phone_number = data.get('phoneNumber')
+
+    if not all([api_id, api_hash, phone_number]):
+        return jsonify({'error': 'Missing required fields (apiId, apiHash, phoneNumber)'}), 400
 
     try:
-        existing_creds = get_user_telegram_credentials(str(user_id))
-        session_string = existing_creds.get("session_string", "")
-        # Store the updated credentials in DynamoDB
-        store_session_string_in_db(str(user_id), session_string, api_id, api_hash, phone_number)
-        return jsonify({"status": "success", "message": "Telegram credentials saved"}), 200
-    except Exception as e:
-        logger.error(f"Error saving Telegram credentials for user {user_id}: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+        # Update the UserSessions table in DynamoDB
+        user_sessions_table.update_item(
+            Key={'user_id': user_id},
+            UpdateExpression='SET apiId = :apiId, apiHash = :apiHash, phoneNumber = :phoneNumber',
+            ExpressionAttributeValues={
+                ':apiId': api_id,
+                ':apiHash': api_hash,
+                ':phoneNumber': phone_number,
+            },
+            ReturnValues='UPDATED_NEW'
+        )
+        return jsonify({'status': 'success', 'message': 'Telegram auth settings updated'}), 200
+    except ClientError as e:
+        logger.error(f"Error updating Telegram auth settings: {e}")
+        return jsonify({'error': 'Failed to update Telegram auth settings'}), 500
 
 @app.route("/telegram/send_code", methods=["POST"])
 def send_code():
