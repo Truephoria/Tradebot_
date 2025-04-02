@@ -1,7 +1,9 @@
 // frontend/src/stores/settings-store.ts
 import { create } from 'zustand';
-import axios from '@/utils/axios'; // Your pre-configured Axios instance
-// If you store your user JWT in localStorage or some global store, import or read it here.
+import axios from '@/utils/axios'; // Import your configured axios instance
+import { SettingsStateType, SettingsAction } from '@/types/settings';
+
+export type SettingStoreType = SettingsStateType & SettingsAction;
 
 interface Settings {
   riskType: 'FIXED' | 'PERCENTAGE';
@@ -16,81 +18,55 @@ interface Settings {
   botEnabled: boolean;
 }
 
-interface SettingState {
-  settings: Settings;
-  isLoading: boolean;
-  error: string | null;
-  getSettings: () => Promise<void>;
-  updateSettings: (newSettings: Partial<Settings>) => Promise<void>;
-}
-
-/**
- * By default, we keep a "clean" set of initial settings
- * or an empty object until we fetch from Python.
- */
-const defaultSettings: Settings = {
-  riskType: 'PERCENTAGE',
-  riskValue: 1.5,
-  maxDailyLoss: 3,
-  minimumRRR: 1.5,
-  enableTrailingStop: true,
-  tradingHoursStart: '08:00',
-  tradingHoursEnd: '16:00',
-  maxTradesPerDay: 10,
-  allowedSymbols: 'EURUSD,GBPUSD,XAUUSD,USDJPY,US30',
-  botEnabled: true,
-};
-
-export const useSettingStore = create<SettingState>((set) => ({
-  settings: defaultSettings,
+export const initSettingState: SettingsStateType = {
+  settings: {
+    riskType: 'PERCENTAGE',
+    riskValue: 1.5,
+    maxDailyLoss: 3,
+    minimumRRR: 1.5,
+    enableTrailingStop: true,
+    tradingHoursStart: '08:00',
+    tradingHoursEnd: '16:00',
+    maxTradesPerDay: 10,
+    allowedSymbols: 'EURUSD,GBPUSD,XAUUSD,USDJPY,US30',
+    botEnabled: true,
+  },
   isLoading: false,
   error: null,
+};
 
-  // Fetch settings from our Next.js route -> Python
+interface SettingState {
+  settings: Record<string, any>;
+  isLoading: boolean;
+  getSettings: () => Promise<void>;
+  updateSettings: (newSettings: Record<string, any>) => Promise<void>;
+}
+
+export const useSettingStore = create<SettingState>((set) => ({
+  settings: {},
+  isLoading: false,
   getSettings: async () => {
-    set({ isLoading: true, error: null });
+    set({ isLoading: true });
     try {
-      // If you need a token for the Python route (which is behind @token_required),
-      // grab it from localStorage or however your login is done
-      const token = localStorage.getItem('token') || '';
-      const response = await axios.get('/api/settings', {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      set({
-        settings: response.data.settings,
-        error: null,
-      });
-      console.log('Settings fetched successfully');
-    } catch (err: any) {
-      console.error('Error fetching settings:', err?.message || err);
-      set({ error: err?.message || 'Failed to fetch settings' });
-      throw err;
+      const response = await axios.get("/api/settings");
+      set({ settings: response.data.settings });
+      console.log("Settings fetched:", response.data.status);
+    } catch (error) {
+      console.error("Error fetching settings:", error);
+      throw error;
     } finally {
       set({ isLoading: false });
     }
   },
-
-  // Update settings via Next.js route -> Python
   updateSettings: async (newSettings) => {
-    set({ isLoading: true, error: null });
+    set({ isLoading: true });
     try {
-      const token = localStorage.getItem('token') || '';
-      const response = await axios.post('/api/settings', newSettings, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      set({
-        settings: response.data.settings || newSettings,
-        error: null,
-      });
-      console.log('Settings updated successfully');
-    } catch (err: any) {
-      console.error('Error updating settings:', err?.message || err);
-      set({ error: err?.message || 'Failed to update settings' });
-      throw err;
+      const response = await axios.post("/api/settings", newSettings);
+      set({ settings: response.data.settings || newSettings });
+      console.log("Settings updated:", response.data.status);
+    } catch (error) {
+      console.error("Error updating settings:", error);
+      throw error;
     } finally {
       set({ isLoading: false });
     }

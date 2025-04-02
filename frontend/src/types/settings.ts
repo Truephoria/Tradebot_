@@ -1,3 +1,5 @@
+// frontend/src/types/settings.ts
+
 export type SettingsType = {
   allowedSymbols: string;
   botEnabled: boolean;
@@ -9,6 +11,7 @@ export type SettingsType = {
   riskValue: number;
   tradingHoursEnd: string;
   tradingHoursStart: string;
+  
 };
 
 export type SettingsStateType = {
@@ -18,6 +21,7 @@ export type SettingsStateType = {
 };
 
 export type SettingsAction = {
-  getSettings: () => void;
-  updateSettings: (settings: any) => void;
+  getSettings: () => Promise<void>;
+  updateSettings: (settings: Partial<SettingsType>) => Promise<void>;
+ 
 };

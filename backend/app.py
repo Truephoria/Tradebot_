@@ -144,13 +144,11 @@ def get_user_telegram_credentials(user_id: str) -> dict:
     try:
         response = user_sessions_table.get_item(Key={"user_id": user_id})
         item = response.get("Item", {})
-        if not item:
-            logger.debug(f"No Telegram credentials found for user {user_id}")
         return {
-            "API_ID": item.get("API_ID", ""),
-            "API_HASH": item.get("API_HASH", ""),
-            "PHONE_NUMBER": item.get("PHONE_NUMBER", ""),
-            "session_string": item.get("session_string", "")
+            "API_ID": item.get("API_ID"),
+            "API_HASH": item.get("API_HASH"),
+            "PHONE_NUMBER": item.get("PHONE_NUMBER"),
+            "session_string": item.get("session_string")
         }
     except ClientError as e:
         logger.error(f"DynamoDB get_item error for user {user_id}: {e}")
