@@ -157,7 +157,7 @@ def get_user_telegram_credentials(user_id: str) -> dict:
 async def is_session_valid(client: TelegramClient) -> bool:
     try:
         await client.connect()
-        await client.get_me()
+        await client.get_me()  # Test if the session is valid
         return True
     except (errors.SessionRevokedError, errors.AuthKeyUnregisteredError, errors.UnauthorizedError):
         logger.warning("Session is invalid or revoked.")
@@ -176,23 +176,22 @@ def get_client_for_user(user_id: str) -> TelegramClient:
     api_hash = creds.get("API_HASH", API_HASH)
     phone_number = creds.get("PHONE_NUMBER")
 
+    # If any credentials are missing, return a client that will fail authorization gracefully
     if not api_id or not api_hash or not phone_number:
-        logger.error(f"No valid API credentials or phone number for user {user_id}.")
-        raise ValueError("Missing Telegram credentials for user.")
+        logger.warning(f"Missing Telegram credentials for user {user_id}. Returning unconfigured client.")
+        return TelegramClient(StringSession(), api_id or "", api_hash or "")
 
     client = TelegramClient(StringSession(session_string) if session_string else StringSession(), api_id, api_hash)
-    
-    # Check validity only if we have a session string
+
+    # Validate existing session
     if session_string:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         is_valid = loop.run_until_complete(is_session_valid(client))
         loop.close()
         if not is_valid:
-            logger.info(f"Session invalid for user {user_id}. Returning unauthorized client.")
-            # Don’t regenerate here; let the caller handle authentication
+            logger.info(f"Session invalid for user {user_id}. Returning fresh client.")
             client = TelegramClient(StringSession(), api_id, api_hash)
-            store_session_string_in_db(user_id, client.session.save(), api_id, api_hash, phone_number)
 
     return client
 
