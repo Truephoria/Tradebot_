@@ -1,28 +1,27 @@
-from flask import Flask, jsonify, request, session
-from flask_bcrypt import Bcrypt
-from flask_session import Session
-from flask_cors import CORS
-from flask_socketio import SocketIO, emit
 import os
-from dotenv import load_dotenv
 import json
-from telethon import TelegramClient, events
-from openai import OpenAI
-import asyncio
-from threading import Thread
-from enum import Enum
-import re
-from datetime import datetime, timedelta
-import jwt
-from functools import wraps
-import logging
-import time
-import requests
-import boto3
-from botocore.exceptions import ClientError
 import uuid
+import re
+import logging
+import asyncio
 import eventlet
 eventlet.monkey_patch()
+
+from flask import Flask, jsonify, request, g
+from flask_bcrypt import Bcrypt
+from flask_cors import CORS
+from flask_socketio import SocketIO, emit
+from dotenv import load_dotenv
+from datetime import datetime, timedelta
+from functools import wraps
+from enum import Enum
+
+import jwt
+import boto3
+from botocore.exceptions import ClientError
+from telethon import TelegramClient, events
+from openai import OpenAI
+from threading import Thread
 
 # Load environment variables
 load_dotenv()
@@ -35,9 +34,11 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # Configure CORS explicitly for API routes
-CORS(app,
-     origins=["https://main.d1bpy75hw1zntc.amplifyapp.com"],
-     supports_credentials=True)
+CORS(
+    app,
+    origins=["https://main.d1bpy75hw1zntc.amplifyapp.com"],
+    supports_credentials=True
+)
 
 # Configure SocketIO with CORS
 socketio = SocketIO(
@@ -46,21 +47,26 @@ socketio = SocketIO(
     async_mode="eventlet"
 )
 
-# Configure flask-session to use filesystem (since we're removing SQLAlchemy)
-app.config["SESSION_TYPE"] = "filesystem"
-app.config["SESSION_PERMANENT"] = True
-app.config["PERMANENT_SESSION_LIFETIME"] = 3600
-#app.config['SESSION_COOKIE_SAMESITE'] = 'None'
-#app.config['SESSION_COOKIE_SECURE'] = True
+# -----------------------------------------------------------------------------
+# JWT Secret Handling (with fallback if environment variable is missing)
+# -----------------------------------------------------------------------------
+secret_key_value = os.getenv("SECRET_KEY", "fallback-secret")
+app.config['SECRET_KEY'] = secret_key_value
+SECRET_KEY = secret_key_value
 
-# Initialize flask-session
-session_handler = Session(app)
+# -----------------------------------------------------------------------------
+# Bcrypt for password hashing
+# -----------------------------------------------------------------------------
 bcrypt = Bcrypt(app)
 
+# -----------------------------------------------------------------------------
 # Initialize OpenAI client
+# -----------------------------------------------------------------------------
 openai_Client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# Initialize DynamoDB client
+# -----------------------------------------------------------------------------
+# Initialize DynamoDB client and tables
+# -----------------------------------------------------------------------------
 dynamodb = boto3.resource('dynamodb')
 users_table = dynamodb.Table('Users')
 channels_table = dynamodb.Table('Channels')
@@ -69,15 +75,16 @@ take_profits_table = dynamodb.Table('TakeProfits')
 settings_table = dynamodb.Table('Settings')
 trades_table = dynamodb.Table('Trades')
 
+# -----------------------------------------------------------------------------
 # Telegram Configuration
+# -----------------------------------------------------------------------------
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
 PHONE_NUMBER = os.getenv("PHONE_NUMBER")
 
-#JWT
-SECRET_KEY = os.getenv("SECRET_KEY")
-
+# -----------------------------------------------------------------------------
 # Enums for status tracking
+# -----------------------------------------------------------------------------
 class SignalStatus(Enum):
     IDLE = 0
     UPDATED = 1
@@ -90,7 +97,9 @@ class SettingStatus(Enum):
 
 settingStatus = SettingStatus.IDLE
 
+# -----------------------------------------------------------------------------
 # Database Initialization
+# -----------------------------------------------------------------------------
 def init_db():
     default_settings = [
         ('allowedSymbols', 'EURUSD,GBPUSD,XAUUSD,USDJPY,US30'),
@@ -161,7 +170,7 @@ def get_channels_is_active(active_only=True):
 
 def update_channel_status(channel_id, is_active):
     try:
-        response = channels_table.update_item(
+        channels_table.update_item(
             Key={'channel_id': channel_id},
             UpdateExpression='SET is_active = :val',
             ExpressionAttributeValues={':val': is_active},
@@ -182,7 +191,7 @@ def get_current_settings():
             key = setting['key']
             value = setting['value']
             if key in ['botEnabled', 'enableTrailingStop']:
-                value = value.lower() == 'true'
+                value = (value.lower() == 'true')
             elif key in ['maxDailyLoss', 'maxTradesPerDay', 'minimumRRR', 'riskValue']:
                 value = float(value)
             settings_dict[key] = value
@@ -225,8 +234,8 @@ def create_signal(signal_data):
     for field in required_fields:
         if field not in signal_data:
             raise ValueError(f"Missing required field: {field}")
-    
-    signal_id = int(uuid.uuid4().int & (1<<31)-1)  # Generate a 31-bit integer ID
+
+    signal_id = int(uuid.uuid4().int & (1 << 31) - 1)  # Generate a 31-bit integer ID
     created_at = datetime.utcnow().isoformat()
     signal_item = {
         'id': signal_id,
@@ -241,13 +250,13 @@ def create_signal(signal_data):
 
     if 'take_profits' in signal_data and isinstance(signal_data['take_profits'], list):
         for tp in signal_data['take_profits']:
-            tp_id = int(uuid.uuid4().int & (1<<31)-1)
+            tp_id = int(uuid.uuid4().int & (1 << 31) - 1)
             take_profits_table.put_item(Item={
                 'id': tp_id,
                 'signal_id': signal_id,
                 'price': float(tp)
             })
-    
+
     logger.info(f"Created new signal with ID {signal_id}")
     return signal_item
 
@@ -258,14 +267,14 @@ def get_latest_signal():
         if not signals:
             return None
         latest_signal = max(signals, key=lambda x: x['created_at'])
-        
+
         # Fetch take profits
         tp_response = take_profits_table.scan(
             FilterExpression='signal_id = :sid',
             ExpressionAttributeValues={':sid': latest_signal['id']}
         )
         take_profits = [tp['price'] for tp in tp_response.get('Items', [])]
-        
+
         return {
             'channel': latest_signal['channel'],
             'symbol': latest_signal['symbol'],
@@ -288,10 +297,10 @@ def update_signal(channel_id, updates):
         signals = response.get('Items', [])
         if not signals:
             return False
-        
+
         signal = signals[0]  # Take the first signal for this channel
         signal_id = signal['id']
-        
+
         update_expression = 'SET '
         expression_attribute_values = {}
         if 'symbol' in updates:
@@ -323,23 +332,25 @@ def update_signal(channel_id, updates):
             )
             for tp in tp_response.get('Items', []):
                 take_profits_table.delete_item(Key={'id': tp['id']})
-            
+
             # Add new take profits
             for tp in updates['take_profits']:
-                tp_id = int(uuid.uuid4().int & (1<<31)-1)
+                tp_id = int(uuid.uuid4().int & (1 << 31) - 1)
                 take_profits_table.put_item(Item={
                     'id': tp_id,
                     'signal_id': signal_id,
                     'price': float(tp)
                 })
-        
+
         logger.info(f"Updated signal for channel {channel_id}")
         return True
     except Exception as e:
         logger.error(f"Error updating signal: {str(e)}")
         return False
 
-# JWT Authentication Decorator
+# -----------------------------------------------------------------------------
+# JWT Authentication Decorator (store user_id in Flask's g)
+# -----------------------------------------------------------------------------
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -349,8 +360,9 @@ def token_required(f):
             return jsonify({"error": "Unauthorized"}), 401
         token = auth_header.split(' ')[1]
         try:
-            jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
-            logger.info("Token validated successfully")
+            payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
+            g.user_id = payload['user_id']
+            logger.info("Token validated successfully, user ID: %s", g.user_id)
         except jwt.ExpiredSignatureError:
             logger.warning("Token has expired")
             return jsonify({"error": "Token expired"}), 401
@@ -360,7 +372,9 @@ def token_required(f):
         return f(*args, **kwargs)
     return decorated
 
+# -----------------------------------------------------------------------------
 # API Routes
+# -----------------------------------------------------------------------------
 @app.route("/api/register", methods=["POST"])
 def register_user():
     name = request.json["name"]
@@ -374,8 +388,8 @@ def register_user():
         if response.get('Items', []):
             logger.warning(f"Registration attempt with existing email: {email}")
             return jsonify({"error": "User already exists"}), 409
-        
-        user_id = int(uuid.uuid4().int & (1<<31)-1)
+
+        user_id = int(uuid.uuid4().int & (1 << 31) - 1)
         hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
         users_table.put_item(Item={
             'id': user_id,
@@ -383,12 +397,12 @@ def register_user():
             'email': email,
             'password': hashed_password
         })
-        
+
         token = jwt.encode({
             'user_id': user_id,
             'exp': datetime.utcnow() + timedelta(hours=24)
         }, SECRET_KEY, algorithm='HS256')
-        session['user_id'] = user_id
+
         logger.info(f"User registered: {email}")
         return jsonify({
             "user": {
@@ -415,16 +429,16 @@ def login_user():
         if not user:
             logger.warning(f"Login attempt with non-existent email: {email}")
             return jsonify({"error": "Can not find user. Please sign up."}), 401
-        
+
         if not bcrypt.check_password_hash(user['password'], password):
             logger.warning(f"Invalid password for email: {email}")
             return jsonify({"error": "Invalid email or password."}), 401
-        
+
         token = jwt.encode({
             'user_id': user['id'],
             'exp': datetime.utcnow() + timedelta(hours=24)
         }, SECRET_KEY, algorithm='HS256')
-        session['user_id'] = user['id']
+
         logger.info(f"User logged in: {email}")
         return jsonify({
             "user": {
@@ -438,42 +452,26 @@ def login_user():
         logger.error(f"Error logging in user: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-@app.route("/logout", methods=["POST"])
-def logout_user():
-    session.pop("user_id", None)
-    logger.info("User logged out")
-    return "200"
+# (Optional) The /logout route is no longer needed for JWT auth,
+# so it’s removed to avoid confusion.
 
 @app.route("/api/@me")
+@token_required
 def get_current_user():
-    auth_header = request.headers.get('Authorization')
-    if not auth_header or not auth_header.startswith('Bearer '):
-        logger.warning("No Authorization header for /api/@me")
-        return jsonify({"error": "Unauthorized"}), 401
-    token = auth_header.split(' ')[1]
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
-        user_id = payload['user_id']
-        response = users_table.get_item(Key={'id': user_id})
-        user = response.get('Item')
-        if not user:
-            logger.warning(f"User not found for ID: {user_id}")
-            return jsonify({"error": "User not found"}), 404
-        logger.info(f"Current user retrieved: {user['email']}")
-        return jsonify({
-            "user": {
-                "id": user['id'],
-                "name": user['name'],
-                "email": user['email'],
-            },
-            "token": token
-        })
-    except jwt.ExpiredSignatureError:
-        logger.warning("Token expired for /api/@me")
-        return jsonify({"error": "Token expired"}), 401
-    except jwt.InvalidTokenError:
-        logger.warning("Invalid token for /api/@me")
-        return jsonify({"error": "Invalid token"}), 401
+    user_id = g.user_id
+    response = users_table.get_item(Key={'id': user_id})
+    user = response.get('Item')
+    if not user:
+        logger.warning(f"User not found for ID: {user_id}")
+        return jsonify({"error": "User not found"}), 404
+    logger.info(f"Current user retrieved: {user['email']}")
+    return jsonify({
+        "user": {
+            "id": user['id'],
+            "name": user['name'],
+            "email": user['email'],
+        }
+    })
 
 @app.route('/api/channels/all', methods=['GET'])
 def get_channels_endpoint():
@@ -610,7 +608,7 @@ def get_signal():
         logger.error(f"Error in get_signal: {str(e)}")
         return jsonify({
             'status': 'error',
-            'message': str(e. __str__())
+            'message': str(e.__str__())
         }), 500
 
 @app.route('/api/signal/history', methods=['GET'])
@@ -814,7 +812,7 @@ def parse_trading_signal(signal_text: str) -> dict:
         "stop_loss": single price value
     }
     Handle variations in formatting and extract partial information when possible."""
-    
+
     try:
         response = openai_Client.chat.completions.create(
             model="gpt-4o-mini",
@@ -850,14 +848,14 @@ def monitor_channel():
         data = request.json
         if not data or 'channel_id' not in data:
             return jsonify({"status": "error", "message": "channel_id is required"}), 400
-        
+
         channels = [int(x) for x in data.get("channel_id")]
         logger.info(f"Monitoring channel: {channels}")
-        
+
         thread = Thread(target=start_monitoring, args=(channels,))
         thread.daemon = True
         thread.start()
-        
+
         return jsonify({"status": "Monitoring started", "channel_id": channels}), 200
     except Exception as e:
         logger.error(f"Error in monitor_channel: {str(e)}")
@@ -922,29 +920,38 @@ def mt_account():
     signal_data = "No Signal"
     setting_data = "No Setting"
     global signalStatus, settingStatus, is_first
+
     now = datetime.now().time()
     current_settings = get_current_settings()
     current_signal = get_latest_signal()
     allowedsymbol = current_settings['allowedSymbols'].split(',')
+
     if is_first:
         is_first = False
         return jsonify({"signal": signal_data, "setting": current_settings}), 202
+
     start_time = datetime.strptime(current_settings['tradingHoursStart'], "%H:%M").time()
     end_time = datetime.strptime(current_settings['tradingHoursEnd'], "%H:%M").time()
+
+    # If only settings changed
     if settingStatus == SettingStatus.UPDATED and signalStatus != SignalStatus.UPDATED:
         settingStatus = SettingStatus.IDLE
         setting_data = current_settings
         logger.info("Setting updated!")
         return jsonify({"signal": signal_data, "setting": setting_data}), 202
+
+    # If within trading hours, bot is enabled, we have a latest signal, and symbol is allowed
     if start_time <= now <= end_time and current_settings['botEnabled'] and current_signal and current_signal['symbol'] in allowedsymbol:
         if signalStatus == SignalStatus.UPDATED and settingStatus != SettingStatus.UPDATED:
             signalStatus = SignalStatus.IDLE
             signal_data = current_signal
             logger.info("Signal updated!")
             return jsonify({"signal": signal_data, "setting": setting_data}), 201
+
     if signal_data == "No Signal" and setting_data == "No Setting":
         logger.info("No Signal or Setting")
         return jsonify({"signal": signal_data, "setting": setting_data}), 203
+
     return jsonify({"signal": signal_data, "setting": setting_data}), 200
 
 @app.route('/mt/get_trade', methods=['GET'])
@@ -995,7 +1002,7 @@ def execute_trade():
                 logger.error(f"Missing required field in trade: {field}")
                 return jsonify({'status': 'error', 'message': f'Missing required field: {field}'}), 400
 
-        trade_id = int(uuid.uuid4().int & (1<<31)-1)
+        trade_id = int(uuid.uuid4().int & (1 << 31) - 1)
         created_at = datetime.utcnow().isoformat()
         new_trade = {
             'id': trade_id,
@@ -1010,7 +1017,7 @@ def execute_trade():
         }
         trades_table.put_item(Item=new_trade)
         logger.info(f"Trade queued in database with ID: {trade_id}")
-        
+
         trade_dict = {
             'id': trade_id,
             'symbol': new_trade['symbol'],
@@ -1029,6 +1036,9 @@ def execute_trade():
         logger.error(f"Failed to queue trade: {str(e)}")
         return jsonify({'status': 'error', 'message': f'Failed to queue trade: {str(e)}'}), 500
 
+# -----------------------------------------------------------------------------
+# Main
+# -----------------------------------------------------------------------------
 if __name__ == '__main__':
     try:
         init_db()
