@@ -5,6 +5,7 @@ import re
 import logging
 import asyncio
 import eventlet
+
 eventlet.monkey_patch()
 
 from flask import Flask, jsonify, request, g
@@ -80,7 +81,7 @@ trades_table = dynamodb.Table('Trades')
 # -----------------------------------------------------------------------------
 API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
-PHONE_NUMBER = os.getenv("PHONE_NUMBER")
+PHONE_NUMBER = os.getenv("PHONE_NUMBER")  # For single-user session approach
 
 # -----------------------------------------------------------------------------
 # Enums for status tracking
@@ -190,8 +191,10 @@ def get_current_settings():
         for setting in settings:
             key = setting['key']
             value = setting['value']
+            # Convert boolean strings to actual booleans
             if key in ['botEnabled', 'enableTrailingStop']:
                 value = (value.lower() == 'true')
+            # Convert certain numeric fields to floats
             elif key in ['maxDailyLoss', 'maxTradesPerDay', 'minimumRRR', 'riskValue']:
                 value = float(value)
             settings_dict[key] = value
@@ -451,7 +454,6 @@ def login_user():
             return jsonify({"error": "Invalid email or password."}), 401
 
         # Convert user['id'] from Decimal to int if necessary
-        # Some items might store as Decimal in DynamoDB
         user_id = int(user['id']) if 'id' in user else None
         user_name = user.get('name', '')
         user_email = user['email']
@@ -462,7 +464,6 @@ def login_user():
         }, SECRET_KEY, algorithm='HS256')
 
         logger.info(f"User logged in: {email}")
-        # Return user fields except password
         return jsonify({
             "user": {
                 "id": user_id,
@@ -490,8 +491,6 @@ def get_current_user():
         logger.warning(f"User not found for ID: {user_id}")
         return jsonify({"error": "User not found"}), 404
 
-    # Convert from Decimal to int if the 'id' is stored that way
-    # Typically, 'user_id' in DB might be a number => Decimal
     if isinstance(user['id'], (int, float)):
         final_id = user['id']
     else:
@@ -532,6 +531,11 @@ def get_channels_endpoint():
 
 @app.route('/api/channels', methods=['GET'])
 def add_channels_endpoint():
+    """
+    NOTE: The name 'add_channels_endpoint' is a bit confusing
+    since it's a GET that fetches channel info from Telegram.
+    But we'll keep it as is to avoid breaking the front end.
+    """
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -869,6 +873,11 @@ def parse_trading_signal(signal_text: str) -> dict:
         return {"error": str(e)}
 
 async def fetch_subscribed_channels():
+    """
+    Attempts to fetch the subscribed channels from a single "session"
+    using PHONE_NUMBER if needed. 
+    # Recommendation: For multi-user scenarios, see 'telegram_auth.py' approach
+    """
     async with TelegramClient('session', API_ID, API_HASH) as telegram_Client:
         if not await telegram_Client.is_user_authorized():
             raise Exception("Telegram client not authorized. Please pre-authorize the session.")
@@ -903,11 +912,13 @@ def start_monitoring(channels):
         logger.info(f"Starting monitoring for channels: {channels}")
         try:
             async with TelegramClient('session', API_ID, API_HASH) as telegram_Client:
+                # Recommendation: For a headless environment, do not attempt interactive login.
                 if not await telegram_Client.is_user_authorized():
-                    logger.warning("Telegram client not authorized; attempting sign-in")
-                    await telegram_Client.send_code_request(PHONE_NUMBER)
-                    code = input("Enter the Telegram code: ")
-                    await telegram_Client.sign_in(PHONE_NUMBER, code)
+                    logger.error(
+                        "Telegram client is not authorized. "
+                        "Please create a valid session beforehand. Skipping monitor."
+                    )
+                    return  # Instead of blocking with input().
 
                 @telegram_Client.on(events.NewMessage(chats=channels))
                 async def handler(event):
@@ -978,7 +989,10 @@ def mt_account():
         return jsonify({"signal": signal_data, "setting": setting_data}), 202
 
     # If within trading hours, bot is enabled, we have a latest signal, and symbol is allowed
-    if start_time <= now <= end_time and current_settings['botEnabled'] and current_signal and current_signal['symbol'] in allowedsymbol:
+    if (start_time <= now <= end_time
+            and current_settings['botEnabled']
+            and current_signal
+            and current_signal['symbol'] in allowedsymbol):
         if signalStatus == SignalStatus.UPDATED and settingStatus != SettingStatus.UPDATED:
             signalStatus = SignalStatus.IDLE
             signal_data = current_signal
