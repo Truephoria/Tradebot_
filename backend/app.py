@@ -21,6 +21,8 @@ import requests
 import boto3
 from botocore.exceptions import ClientError
 import uuid
+import eventlet
+eventlet.monkey_patch()
 
 # Load environment variables
 load_dotenv()
@@ -43,6 +45,8 @@ app.config["SESSION_TYPE"] = "filesystem"
 app.config["SESSION_PERMANENT"] = True
 app.config["PERMANENT_SESSION_LIFETIME"] = 3600
 app.config['SECRET_KEY'] = os.getenv("SECRET_KEY")
+app.config['SESSION_COOKIE_SAMESITE'] = 'None'
+app.config['SESSION_COOKIE_SECURE'] = True
 
 # Initialize flask-session
 session_handler = Session(app)
@@ -1022,7 +1026,7 @@ if __name__ == '__main__':
     try:
         init_db()
         logger.info("Starting Flask-SocketIO server on http://0.0.0.0:5000")
-        socketio.run(app, host="0.0.0.0", port=5000, debug=True)
+        socketio.run(app, host="0.0.0.0", port=5000, debug=False)
     except Exception as e:
         logger.error(f"Failed to start server: {str(e)}")
         exit(1)

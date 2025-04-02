@@ -1,9 +1,10 @@
-Flask==2.3.2
+Flask==2.0.3
 Flask-Cors==3.0.10
 Flask-SocketIO==5.3.4
 python-dotenv==1.0.0
-openai==0.27.8
+openai>=1.0.0
 telethon==1.28.5
+werkzeug==2.0.3
 Flask-Bcrypt==0.7.1
 Flask-Session==0.4.0
 Flask-SQLAlchemy==2.5.1
@@ -13,3 +14,6 @@ psutil==5.8.0
 requests==2.26.0
 boto3==1.26.0
 PyJWT==2.8.0
+gunicorn==22.0.0  # Add Gunicorn
+eventlet==0.36.1
+
