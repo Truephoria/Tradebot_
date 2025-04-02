@@ -77,7 +77,7 @@ const authFormSchema = z.object({
   phoneNumber: z.string().min(1, 'PHONE_NUMBER is required'),
 });
 
-// You might want a default or initial set of values read from your .env or store.
+// Example defaults for authentication form
 const defaultAuthSettings = {
   apiId: 0,
   apiHash: '',
@@ -103,7 +103,7 @@ const SettingsPage: React.FC = () => {
   });
 
   useEffect(() => {
-    // Fetch your existing settings from store, and also your auth creds if stored
+    // Fetch your existing settings from the store (and possibly auth fields too)
     getSettings()
       .then(() => {
         form.reset(settings || defaultSettings);
@@ -123,7 +123,6 @@ const SettingsPage: React.FC = () => {
     // Socket init
     initializeSocket();
     socket.current = getSocket();
-
     if (!socket.current) {
       console.error('Socket is not initialized.');
       return;
@@ -139,39 +138,55 @@ const SettingsPage: React.FC = () => {
     };
   }, []);
 
-  // For the main settings form
+  // Re-sync form if settings update outside editing
   useEffect(() => {
     if (!isEditing && settings) {
       form.reset(settings);
     }
   }, [settings, isEditing]);
 
+  // Main form submit
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
     try {
       await updateSettings(values);
       toast.success('Settings saved successfully');
-      setIsEditing(false); // Stop editing after save
+      setIsEditing(false);
     } catch (error) {
       console.error('Error updating settings:', error);
       toast.error('Error updating settings');
     }
   };
 
-  // For the authentication form
+  // Auth form submit (SENDS the credentials to your server endpoint)
   const onAuthSubmit = async (values: z.infer<typeof authFormSchema>) => {
     try {
-      // Do whatever you need to do to update/handle the credentials
-      console.log('Auth form submitted:', values);
+      // If your server requires a JWT token, retrieve it from your auth store/context/localStorage
+      // For example: const token = localStorage.getItem('token') || '';
+
+      const response = await fetch('/api/telegram/auth_settings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          // 'Authorization': `Bearer ${token}` // if needed
+        },
+        body: JSON.stringify(values),
+      });
+
+      if (!response.ok) {
+        const msg = await response.text();
+        throw new Error(msg || 'Failed to save credentials');
+      }
+
       toast.success('Authentication credentials saved');
     } catch (error) {
-      console.log('Error updating credentials:', error);
+      console.error('Error updating credentials:', error);
       toast.error('Error updating credentials');
     }
   };
 
   const handleFormChange = () => {
     if (!isEditing) {
-      setIsEditing(true); // Mark as editing when user changes the main form
+      setIsEditing(true);
     }
   };
 
@@ -186,22 +201,19 @@ const SettingsPage: React.FC = () => {
               <Shield size={16} />
               <span>Risk Management</span>
             </TabsTrigger>
-
             <TabsTrigger value="trading" className="flex items-center gap-2">
               <DollarSign size={16} />
               <span>Trading</span>
             </TabsTrigger>
-
-            {/* NEW: Authentication Tab */}
             <TabsTrigger value="authentication" className="flex items-center gap-2">
               <Lock size={16} />
               <span>Authentication</span>
             </TabsTrigger>
           </TabsList>
 
-          {/* ----------------------------------- */}
-          {/* Risk and Trading: Existing form(s) */}
-          {/* ----------------------------------- */}
+          {/* ---------------------- */}
+          {/*  Risk/Trading Forms  */}
+          {/* ---------------------- */}
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} onChange={handleFormChange}>
               <TabsContent value="risk" className="space-y-4">
@@ -214,6 +226,7 @@ const SettingsPage: React.FC = () => {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {/* riskType dropdown */}
                       <FormField
                         control={form.control}
                         name="riskType"
@@ -226,7 +239,11 @@ const SettingsPage: React.FC = () => {
                             >
                               <FormControl>
                                 <SelectTrigger>
-                                  <SelectValue placeholder="Select risk type" />
+                                  {field.value ? (
+                                    <SelectValue />
+                                  ) : (
+                                    <SelectValue placeholder="Select risk type" />
+                                  )}
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
@@ -241,6 +258,7 @@ const SettingsPage: React.FC = () => {
                         )}
                       />
 
+                      {/* riskValue */}
                       <FormField
                         control={form.control}
                         name="riskValue"
@@ -417,6 +435,7 @@ const SettingsPage: React.FC = () => {
                 </Card>
               </TabsContent>
 
+              {/* Save/Cancel Buttons */}
               <div className="mt-6 flex justify-end space-x-4">
                 <Button
                   type="button"
@@ -436,7 +455,7 @@ const SettingsPage: React.FC = () => {
           </Form>
 
           {/* -------------------------------
-              NEW: Authentication Tab UI
+              Authentication Tab / Form
           ------------------------------- */}
           <TabsContent value="authentication" className="space-y-4">
             <Card className="card-shadow border border-border">

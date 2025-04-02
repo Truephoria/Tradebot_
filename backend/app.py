@@ -1082,6 +1082,7 @@ def get_telegram_auth():
 
 @app.route("/api/telegram/auth_settings", methods=["POST"])
 def save_telegram_auth():
+    print.log("save telegram auth")
     user_id = request.args.get("user_id", "")
     data = request.json or {}
     api_id = data.get("apiId")
