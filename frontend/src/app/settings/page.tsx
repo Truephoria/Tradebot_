@@ -230,7 +230,7 @@ const SettingsPage: React.FC = () => {
                               </FormControl>
                               <SelectContent
                                 position="popper"
-                                className="z-50 backdrop-blur-sm bg-white/80"
+                                className="z-50 backdrop-blur-sm bg-black/80"
                               >
                                 <SelectItem value="FIXED">Fixed Lot Size</SelectItem>
                                 <SelectItem value="PERCENTAGE">Percentage Based</SelectItem>

@@ -155,12 +155,9 @@ def get_user_telegram_credentials(user_id: str) -> dict:
         return {}
 
 async def is_session_valid(client: TelegramClient) -> bool:
-    """
-    Check if the Telegram session is still valid by attempting to get the user's info.
-    """
     try:
         await client.connect()
-        await client.get_me()  # Simple test to verify authorization
+        await client.get_me()
         return True
     except (errors.SessionRevokedError, errors.AuthKeyUnregisteredError, errors.UnauthorizedError):
         logger.warning("Session is invalid or revoked.")
@@ -169,13 +166,10 @@ async def is_session_valid(client: TelegramClient) -> bool:
         logger.error(f"Error checking session validity: {str(e)}")
         return False
     finally:
-        await client.disconnect()
+        if client.is_connected():
+            await client.disconnect()
 
 def get_client_for_user(user_id: str) -> TelegramClient:
-    """
-    Returns a configured Telethon client for the given user_id.
-    Regenerates the session if it’s invalid or missing.
-    """
     creds = get_user_telegram_credentials(user_id)
     session_string = creds.get("session_string")
     api_id = creds.get("API_ID", API_ID)
@@ -186,25 +180,19 @@ def get_client_for_user(user_id: str) -> TelegramClient:
         logger.error(f"No valid API credentials or phone number for user {user_id}.")
         raise ValueError("Missing Telegram credentials for user.")
 
-    client = None
+    client = TelegramClient(StringSession(session_string) if session_string else StringSession(), api_id, api_hash)
+    
+    # Check validity only if we have a session string
     if session_string:
-        logger.debug(f"Using existing session for user {user_id}")
-        client = TelegramClient(StringSession(session_string), api_id, api_hash)
-        # Check if the session is valid
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         is_valid = loop.run_until_complete(is_session_valid(client))
         loop.close()
         if not is_valid:
-            logger.info(f"Session invalid for user {user_id}. Regenerating...")
-            session_string = None  # Force regeneration
-
-    if not session_string:
-        logger.debug(f"Creating new session for user {user_id}")
-        client = TelegramClient(StringSession(), api_id, api_hash)
-        # We don’t sign in here; that’s handled by /telegram/send_code and /verify_code
-        # Store the initial empty session string to mark it as pending authentication
-        store_session_string_in_db(user_id, client.session.save(), api_id, api_hash, phone_number)
+            logger.info(f"Session invalid for user {user_id}. Returning unauthorized client.")
+            # Don’t regenerate here; let the caller handle authentication
+            client = TelegramClient(StringSession(), api_id, api_hash)
+            store_session_string_in_db(user_id, client.session.save(), api_id, api_hash, phone_number)
 
     return client
 
@@ -607,10 +595,32 @@ def get_channels_endpoint():
 def add_channels_endpoint():
     try:
         user_id = request.args.get("user_id", "")
+        if not user_id:
+            return jsonify({'status': 'error', 'message': 'user_id is required'}), 400
+
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        channels = loop.run_until_complete(fetch_subscribed_channels(user_id))
+        client = get_client_for_user(user_id)
+        async def fetch_channels():
+            await client.connect()
+            if not await client.is_user_authorized():
+                await client.disconnect()
+                return None  # Indicate unauthorized state
+            dialogs = await client.get_dialogs()
+            await client.disconnect()
+            return [
+                {"name": d.entity.title, "id": str(d.entity.id)}
+                for d in dialogs if d.is_channel
+            ]
+
+        channels = loop.run_until_complete(fetch_channels())
         loop.close()
+
+        if channels is None:
+            return jsonify({
+                'status': 'unauthorized',
+                'message': 'Telegram client not authorized. Please authenticate via /telegram/send_code.'
+            }), 401
 
         channels = add_channels(channels)
         return jsonify({
