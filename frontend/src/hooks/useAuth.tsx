@@ -25,38 +25,33 @@ export default function useAuth() {
     }
   }, [setToken]);
 
-  // ✅ Axios interceptor to send token from localStorage
+  // ✅ Axios interceptor to use store token
   useEffect(() => {
     const interceptor = axios.interceptors.request.use(
       (config: InternalAxiosRequestConfig) => {
-        const storedToken = localStorage.getItem('token');
-        if (storedToken) {
+        if (token) {
           config.headers = config.headers || {};
-          config.headers.Authorization = `Bearer ${storedToken}`;
+          config.headers.Authorization = `Bearer ${token}`;
         }
         return config;
       },
       (error: AxiosError) => Promise.reject(error)
     );
     return () => axios.interceptors.request.eject(interceptor);
-  }, []);
+  }, [token]);
 
-  // ✅ Check authentication status
+  // ✅ Check authentication only after token is set
   useEffect(() => {
-    const checkAuth = async () => {
-      if (typeof window === 'undefined') return;
-
-      setIsCheckingAuth(true);
-      const storedToken = localStorage.getItem('token');
-
-      if (!storedToken) {
-        if (pathname !== '/auth') {
-          router.push(`/auth?from=${encodeURIComponent(pathname || '')}`);
-        }
-        setIsCheckingAuth(false);
-        return;
+    if (!token) {
+      setIsCheckingAuth(false);
+      if (pathname !== '/auth') {
+        router.push(`/auth?from=${encodeURIComponent(pathname || '')}`);
       }
+      return;
+    }
 
+    const checkAuth = async () => {
+      setIsCheckingAuth(true);
       try {
         const response = await axios.get('/api/@me');
         setUser(response.data.user as User);
@@ -78,7 +73,7 @@ export default function useAuth() {
     };
 
     checkAuth();
-  }, [pathname, router, clearToken]);
+  }, [token, pathname, router, clearToken]);
 
   // ✅ Login
   const login = async (email: string, password: string): Promise<User> => {
@@ -88,7 +83,7 @@ export default function useAuth() {
       const response = await axios.post('/api/login', { email, password });
       const { token, user } = response.data;
       setToken(token);
-      localStorage.setItem('token', token); // Save to localStorage
+      localStorage.setItem('token', token);
       setUser(user);
 
       const from = new URLSearchParams(window.location.search).get('from') || '/';
@@ -115,7 +110,7 @@ export default function useAuth() {
       const response = await axios.post('/api/register', userData);
       const { token, user } = response.data;
       setToken(token);
-      localStorage.setItem('token', token); // Save to localStorage
+      localStorage.setItem('token', token);
       setUser(user);
       router.push('/');
       return user;
@@ -131,7 +126,7 @@ export default function useAuth() {
   // ✅ Logout
   const logout = useCallback(() => {
     clearToken();
-    localStorage.removeItem('token'); // Clear token from localStorage
+    localStorage.removeItem('token');
     setUser(null);
     router.push('/auth');
   }, [clearToken, router]);
