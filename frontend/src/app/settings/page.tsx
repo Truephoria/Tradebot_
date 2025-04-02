@@ -9,7 +9,7 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { DollarSign, Shield } from 'lucide-react';
+import { DollarSign, Lock, Shield } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -39,6 +39,9 @@ import { toast } from 'sonner';
 import { useSettingStore } from '@/stores/settings-store';
 import { Socket } from 'socket.io-client';
 
+/* ------------------------------
+   Existing Risk/Trading schema
+------------------------------ */
 const formSchema = z.object({
   riskType: z.enum(['FIXED', 'PERCENTAGE']),
   riskValue: z.coerce.number().min(0.01).max(100),
@@ -65,28 +68,60 @@ const defaultSettings = {
   botEnabled: true,
 };
 
+/* -------------------------------------
+   NEW: Authentication-related schema
+-------------------------------------- */
+const authFormSchema = z.object({
+  apiId: z.coerce.number({ invalid_type_error: 'Must be a number' }),
+  apiHash: z.string().min(1, 'API_HASH is required'),
+  phoneNumber: z.string().min(1, 'PHONE_NUMBER is required'),
+});
+
+// You might want a default or initial set of values read from your .env or store.
+const defaultAuthSettings = {
+  apiId: 0,
+  apiHash: '',
+  phoneNumber: '',
+};
+
 const SettingsPage: React.FC = () => {
   const socket = useRef<Socket | null>(null);
   const setSignalState = useSignalStore((state) => state.setSignal);
   const { settings, getSettings, updateSettings } = useSettingStore();
   const [isEditing, setIsEditing] = useState(false); // Track editing state
 
+  // Form 1: Risk/Trading settings
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
     defaultValues: defaultSettings,
   });
 
+  // Form 2: Authentication settings
+  const authForm = useForm<z.infer<typeof authFormSchema>>({
+    resolver: zodResolver(authFormSchema),
+    defaultValues: defaultAuthSettings,
+  });
+
   useEffect(() => {
-    // Fetch settings only once on mount
+    // Fetch your existing settings from store, and also your auth creds if stored
     getSettings()
       .then(() => {
         form.reset(settings || defaultSettings);
+        // If your store returns authentication fields, reset them too
+        // For example:
+        // authForm.reset({
+        //   apiId: settings?.apiId ?? 12345,
+        //   apiHash: settings?.apiHash ?? "",
+        //   phoneNumber: settings?.phoneNumber ?? ""
+        // });
       })
       .catch((err) => {
         console.error('Failed to fetch settings:', err);
         form.reset(defaultSettings);
+        authForm.reset(defaultAuthSettings);
       });
 
+    // Socket init
     initializeSocket();
     socket.current = getSocket();
 
@@ -103,9 +138,9 @@ const SettingsPage: React.FC = () => {
     return () => {
       currentSocket.off('new_signal');
     };
-  }, []); // Empty dependency array to run only on mount
+  }, []);
 
-  // Sync form with settings changes only when not editing
+  // For the main settings form
   useEffect(() => {
     if (!isEditing && settings) {
       form.reset(settings);
@@ -114,7 +149,7 @@ const SettingsPage: React.FC = () => {
 
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
     try {
-      await updateSettings(values);
+      await updateSettings(values); 
       toast.success('Settings saved successfully');
       setIsEditing(false); // Stop editing after save
     } catch (error) {
@@ -123,15 +158,27 @@ const SettingsPage: React.FC = () => {
     }
   };
 
+  // For the authentication form
+  const onAuthSubmit = async (values: z.infer<typeof authFormSchema>) => {
+    try {
+      // Do whatever you need to do to update/handle the credentials
+      // e.g., await updateSettingsInYourStore(values);
+      console.log('Auth form submitted:', values);
+      toast.success('Authentication credentials saved');
+    } catch (error) {
+      console.error('Error updating credentials:', error);
+      toast.error('Error updating credentials');
+    }
+  };
+
   const handleFormChange = () => {
     if (!isEditing) {
-      setIsEditing(true); // Mark as editing when user changes form
+      setIsEditing(true); // Mark as editing when user changes the main form
     }
   };
 
   return (
     <div className="min-h-screen bg-background transition-colors duration-300">
-      
       <main className="container mx-auto py-6 px-4 min-h-[calc(100vh-73px)] animate-fade-in">
         <h1 className="text-2xl font-bold mb-6">Settings</h1>
 
@@ -141,12 +188,22 @@ const SettingsPage: React.FC = () => {
               <Shield size={16} />
               <span>Risk Management</span>
             </TabsTrigger>
+
             <TabsTrigger value="trading" className="flex items-center gap-2">
               <DollarSign size={16} />
               <span>Trading</span>
             </TabsTrigger>
+
+            {/* NEW: Authentication Tab */}
+            <TabsTrigger value="authentication" className="flex items-center gap-2">
+              <Lock size={16} />
+              <span>Authentication</span>
+            </TabsTrigger>
           </TabsList>
 
+          {/* ----------------------------------- */}
+          {/* Risk and Trading: Existing form(s) */}
+          {/* ----------------------------------- */}
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} onChange={handleFormChange}>
               <TabsContent value="risk" className="space-y-4">
@@ -185,6 +242,7 @@ const SettingsPage: React.FC = () => {
                           </FormItem>
                         )}
                       />
+
                       <FormField
                         control={form.control}
                         name="riskValue"
@@ -206,6 +264,7 @@ const SettingsPage: React.FC = () => {
                           </FormItem>
                         )}
                       />
+
                       <FormField
                         control={form.control}
                         name="maxDailyLoss"
@@ -221,6 +280,7 @@ const SettingsPage: React.FC = () => {
                           </FormItem>
                         )}
                       />
+
                       <FormField
                         control={form.control}
                         name="minimumRRR"
@@ -236,6 +296,7 @@ const SettingsPage: React.FC = () => {
                           </FormItem>
                         )}
                       />
+
                       <FormField
                         control={form.control}
                         name="enableTrailingStop"
@@ -284,6 +345,7 @@ const SettingsPage: React.FC = () => {
                           </FormItem>
                         )}
                       />
+
                       <FormField
                         control={form.control}
                         name="tradingHoursEnd"
@@ -299,6 +361,7 @@ const SettingsPage: React.FC = () => {
                           </FormItem>
                         )}
                       />
+
                       <FormField
                         control={form.control}
                         name="maxTradesPerDay"
@@ -314,6 +377,7 @@ const SettingsPage: React.FC = () => {
                           </FormItem>
                         )}
                       />
+
                       <FormField
                         control={form.control}
                         name="allowedSymbols"
@@ -329,6 +393,7 @@ const SettingsPage: React.FC = () => {
                           </FormItem>
                         )}
                       />
+
                       <FormField
                         control={form.control}
                         name="botEnabled"
@@ -371,6 +436,83 @@ const SettingsPage: React.FC = () => {
               </div>
             </form>
           </Form>
+
+          {/* -------------------------------
+              NEW: Authentication Tab UI
+          ------------------------------- */}
+          <TabsContent value="authentication" className="space-y-4">
+            <Card className="card-shadow border border-border">
+              <CardHeader>
+                <CardTitle>Authentication</CardTitle>
+                <CardDescription>
+                  Enter your Telegram credentials below
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <Form {...authForm}>
+                  <form
+                    onSubmit={authForm.handleSubmit(onAuthSubmit)}
+                    className="space-y-4"
+                  >
+                    <FormField
+                      control={authForm.control}
+                      name="apiId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>API_ID</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              placeholder="Your Telegram API ID"
+                              {...field}
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={authForm.control}
+                      name="apiHash"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>API_HASH</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="Your Telegram API Hash"
+                              {...field}
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={authForm.control}
+                      name="phoneNumber"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>PHONE_NUMBER</FormLabel>
+                          <FormControl>
+                            <Input
+                              placeholder="Your phone number (e.g. +15551234567)"
+                              {...field}
+                            />
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+
+                    <div className="flex justify-end">
+                      <Button type="submit">
+                        Save Authentication
+                      </Button>
+                    </div>
+                  </form>
+                </Form>
+              </CardContent>
+            </Card>
+          </TabsContent>
         </Tabs>
       </main>
     </div>
