@@ -592,12 +592,10 @@ def get_channels_endpoint():
 
 # Removed token requirement for new endpoint:
 @app.route('/api/channels', methods=['GET'])
+@token_required
 def add_channels_endpoint():
     try:
-        user_id = request.args.get("user_id", "")
-        if not user_id:
-            return jsonify({'status': 'error', 'message': 'user_id is required'}), 400
-
+        user_id = g.user_id  # Get user_id from the JWT token
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         client = get_client_for_user(user_id)

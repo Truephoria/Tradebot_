@@ -13,9 +13,6 @@ export const initChannelListState: ChannelListType = {
   error: null,
 };
 
-
-
-
 const socket = io('https://pkbk36mqmi.us-east-2.awsapprunner.com', {
   reconnection: true,
   withCredentials: true, // Add this to support cookies/sessions
@@ -23,12 +20,13 @@ const socket = io('https://pkbk36mqmi.us-east-2.awsapprunner.com', {
 
 export const useChannelStore = create<ChannelStoreType>((set) => ({
   ...initChannelListState,
+
   getChannelList: async () => {
     set({ isLoading: true });
     try {
       const token = useAuthStore.getState().token;
       if (!token) throw new Error("No authentication token available");
-      const response = await fetch('https://pkbk36mqmi.us-east-2.awsapprunner.com/api/channels/all', { // Update to ngrok URL later
+      const response = await fetch('https://pkbk36mqmi.us-east-2.awsapprunner.com/api/channels/all', {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
@@ -51,30 +49,44 @@ export const useChannelStore = create<ChannelStoreType>((set) => ({
       console.error('Error fetching channel list:', error);
     }
   },
+
   fetchChannelList: async () => {
     set({ isLoading: true, error: null });
     try {
       const token = useAuthStore.getState().token;
       if (!token) throw new Error("No authentication token available");
-      const response = await fetch('https://pkbk36mqmi.us-east-2.awsapprunner.com/api/channels', { // Update to ngrok URL later
+
+      const response = await fetch('https://pkbk36mqmi.us-east-2.awsapprunner.com/api/channels', {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
       });
+
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(`HTTP error! status: ${response.status}, message: ${errorData.message || 'Unknown error'}`);
+        if (response.status === 401 && errorData.status === 'unauthorized') {
+          throw new Error("Telegram authentication required. Please re-authenticate.");
+        }
+        throw new Error(
+          `HTTP error! status: ${response.status}, message: ${errorData.message || 'Unknown error'}`
+        );
       }
+
       const data = await response.json();
+
       const allChannelsResponse = await fetch('https://pkbk36mqmi.us-east-2.awsapprunner.com/api/channels/all', {
         headers: {
           'Authorization': `Bearer ${token}`,
         },
       });
+
       if (!allChannelsResponse.ok) {
         const errorData = await allChannelsResponse.json();
-        throw new Error(`HTTP error! status: ${allChannelsResponse.status}, message: ${errorData.message || 'Unknown error'}`);
+        throw new Error(
+          `HTTP error! status: ${allChannelsResponse.status}, message: ${errorData.message || 'Unknown error'}`
+        );
       }
+
       const allChannelsData = await allChannelsResponse.json();
       set({
         selectedChannel: allChannelsData.active_channels || [],
@@ -87,9 +99,10 @@ export const useChannelStore = create<ChannelStoreType>((set) => ({
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       set({ isLoading: false, error: errorMessage });
       console.error('Error fetching channels:', error);
-      throw error;
+      throw error; // Re-throw to allow components to handle the error (e.g., show a toast)
     }
   },
+
   addChannel: async (channelId: string) => {
     set((state) => ({
       selectedChannel: state.selectedChannel.includes(channelId)
@@ -99,14 +112,17 @@ export const useChannelStore = create<ChannelStoreType>((set) => ({
     try {
       const token = useAuthStore.getState().token;
       if (!token) throw new Error("No authentication token available");
-      const response = await fetch(`https://pkbk36mqmi.us-east-2.awsapprunner.com/api/channels/${channelId}/status`, { // Update to ngrok URL
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ is_active: true }),
-      });
+      const response = await fetch(
+        `https://pkbk36mqmi.us-east-2.awsapprunner.com/api/channels/${channelId}/status`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({ is_active: true }),
+        }
+      );
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(`HTTP error! status: ${response.status}, message: ${errorData.message || 'Unknown error'}`);
@@ -118,6 +134,7 @@ export const useChannelStore = create<ChannelStoreType>((set) => ({
       console.error('Error adding channel:', errorMessage);
     }
   },
+
   removeChannel: async (channelId: string) => {
     set((state) => ({
       selectedChannel: state.selectedChannel.filter((c) => c !== channelId),
@@ -125,14 +142,17 @@ export const useChannelStore = create<ChannelStoreType>((set) => ({
     try {
       const token = useAuthStore.getState().token;
       if (!token) throw new Error("No authentication token available");
-      const response = await fetch(`https://pkbk36mqmi.us-east-2.awsapprunner.com/${channelId}/status`, { // Update to ngrok URL
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ is_active: false }),
-      });
+      const response = await fetch(
+        `https://pkbk36mqmi.us-east-2.awsapprunner.com/${channelId}/status`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({ is_active: false }),
+        }
+      );
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(`HTTP error! status: ${response.status}, message: ${errorData.message || 'Unknown error'}`);
