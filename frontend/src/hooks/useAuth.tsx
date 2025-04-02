@@ -13,7 +13,7 @@ export default function useAuth() {
   const [isCheckingAuth, setIsCheckingAuth] = useState<boolean>(true);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const router = useRouter();
+  const router = useRouter(); 
   const pathname = usePathname();
   const { token, setToken, clearToken } = useAuthStore();
 
@@ -23,6 +23,7 @@ export default function useAuth() {
     if (storedToken) {
       setToken(storedToken);
     }
+    
   }, [setToken]);
 
   // ✅ Axios interceptor to send token from localStorage
