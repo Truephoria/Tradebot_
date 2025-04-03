@@ -18,9 +18,9 @@ export const initSettingState: SettingsStateType = {
     maxTradesPerDay: 10,
     allowedSymbols: 'EURUSD,GBPUSD,XAUUSD,USDJPY,US30',
     botEnabled: true,
-    apiId: '', // Now a string
-    apiHash: '', // Now a string
-    phoneNumber: '', // Now a string
+    apiId: '',
+    apiHash: '',
+    phoneNumber: '',
   },
   isLoading: false,
   error: null,
@@ -32,24 +32,34 @@ interface SettingState {
   error: string | null;
   getSettings: () => Promise<void>;
   updateSettings: (newSettings: Partial<SettingsStateType['settings']>) => Promise<void>;
-  getTelegramSettings: () => Promise<void>;
-  updateTelegramSettings: (newSettings: Partial<Pick<SettingsStateType['settings'], 'apiId' | 'apiHash' | 'phoneNumber'>>) => Promise<void>;
 }
 
 export const useSettingStore = create<SettingState>((set) => ({
   settings: initSettingState.settings,
   isLoading: false,
   error: null,
-  // Fetch risk/trading settings
+  // Fetch all settings (risk/trading + Telegram)
   getSettings: async () => {
     set({ isLoading: true });
     try {
-      const response = await axios.get("/api/settings");
+      // Fetch risk/trading settings
+      const settingsResponse = await axios.get("/api/settings");
+      // Fetch Telegram settings
+      const telegramResponse = await axios.get("/api/telegram/auth_settings");
+      const credentials = telegramResponse.data.credentials || {};
+
       set((state) => ({
-        settings: { ...state.settings, ...response.data.settings },
+        settings: {
+          ...state.settings,
+          ...settingsResponse.data.settings,
+          apiId: credentials.apiId || '',
+          apiHash: credentials.apiHash || '',
+          phoneNumber: credentials.phoneNumber || '',
+        },
         error: null,
       }));
-      console.log("Settings fetched:", response.data.status);
+      console.log("Settings fetched:", settingsResponse.data.status);
+      console.log("Telegram settings fetched:", telegramResponse.data.status);
     } catch (error) {
       console.error("Error fetching settings:", error);
       set({ error: "Failed to fetch settings" });
@@ -58,66 +68,52 @@ export const useSettingStore = create<SettingState>((set) => ({
       set({ isLoading: false });
     }
   },
-  // Update risk/trading settings
+  // Update all settings (risk/trading + Telegram)
   updateSettings: async (newSettings) => {
     set({ isLoading: true });
     try {
-      const response = await axios.post("/api/settings", newSettings);
+      // Check if Telegram settings are being updated
+      const hasTelegramSettings = 'apiId' in newSettings || 'apiHash' in newSettings || 'phoneNumber' in newSettings;
+      const telegramSettings: Partial<Pick<SettingsStateType['settings'], 'apiId' | 'apiHash' | 'phoneNumber'>> = {};
+
+      if (hasTelegramSettings) {
+        if (newSettings.apiId !== undefined) telegramSettings.apiId = newSettings.apiId;
+        if (newSettings.apiHash !== undefined) telegramSettings.apiHash = newSettings.apiHash;
+        if (newSettings.phoneNumber !== undefined) telegramSettings.phoneNumber = newSettings.phoneNumber;
+      }
+
+      // Update risk/trading settings if present
+      const riskTradingSettings: Partial<SettingsStateType['settings']> = { ...newSettings };
+      delete riskTradingSettings.apiId;
+      delete riskTradingSettings.apiHash;
+      delete riskTradingSettings.phoneNumber;
+
+      // Send requests to the appropriate endpoints
+      const promises: Promise<any>[] = [];
+      if (Object.keys(riskTradingSettings).length > 0) {
+        promises.push(axios.post("/api/settings", riskTradingSettings));
+      }
+      if (Object.keys(telegramSettings).length > 0) {
+        promises.push(axios.post("/api/telegram/auth_settings", telegramSettings));
+      }
+
+      const responses = await Promise.all(promises);
+
+      // Update the store with the new settings
       set((state) => ({
-        settings: { ...state.settings, ...response.data.settings },
+        settings: {
+          ...state.settings,
+          ...newSettings,
+        },
         error: null,
       }));
-      console.log("Settings updated:", response.data.status);
+
+      responses.forEach((response) => {
+        console.log("Settings updated:", response.data.status);
+      });
     } catch (error) {
       console.error("Error updating settings:", error);
       set({ error: "Failed to update settings" });
-      throw error;
-    } finally {
-      set({ isLoading: false });
-    }
-  },
-  // Fetch Telegram settings
-  getTelegramSettings: async () => {
-    set({ isLoading: true });
-    try {
-      const response = await axios.get("/api/telegram/auth_settings");
-      const credentials = response.data.credentials || {};
-      set((state) => ({
-        settings: {
-          ...state.settings,
-          apiId: credentials.apiId || '',
-          apiHash: credentials.apiHash || '',
-          phoneNumber: credentials.phoneNumber || '',
-        },
-        error: null,
-      }));
-      console.log("Telegram settings fetched:", response.data.status);
-    } catch (error) {
-      console.error("Error fetching Telegram settings:", error);
-      set({ error: "Failed to fetch Telegram settings" });
-      throw error;
-    } finally {
-      set({ isLoading: false });
-    }
-  },
-  // Update Telegram settings
-  updateTelegramSettings: async (newSettings) => {
-    set({ isLoading: true });
-    try {
-      const response = await axios.post("/api/telegram/auth_settings", newSettings);
-      set((state) => ({
-        settings: {
-          ...state.settings,
-          apiId: newSettings.apiId !== undefined ? newSettings.apiId : state.settings.apiId,
-          apiHash: newSettings.apiHash !== undefined ? newSettings.apiHash : state.settings.apiHash,
-          phoneNumber: newSettings.phoneNumber !== undefined ? newSettings.phoneNumber : state.settings.phoneNumber,
-        },
-        error: null,
-      }));
-      console.log("Telegram settings updated:", response.data.status);
-    } catch (error) {
-      console.error("Error updating Telegram settings:", error);
-      set({ error: "Failed to update Telegram settings" });
       throw error;
     } finally {
       set({ isLoading: false });

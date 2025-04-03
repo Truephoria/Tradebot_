@@ -147,9 +147,7 @@ const SettingsPage: React.FC = () => {
         maxTradesPerDay: settings.maxTradesPerDay || defaultSettings.maxTradesPerDay,
         allowedSymbols: settings.allowedSymbols || defaultSettings.allowedSymbols,
         botEnabled: settings.botEnabled ?? defaultSettings.botEnabled,
-        apiId: settings.apiId || defaultSettings.apiId,
-        apiHash: settings.apiHash || defaultSettings.apiHash,
-        phoneNumber: settings.phoneNumber || defaultSettings.phoneNumber,
+        
       });
     }
   }, [settings, isEditing, form, isInitialLoad]);

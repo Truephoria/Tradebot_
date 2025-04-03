@@ -71,7 +71,10 @@ const SignalMonitor: React.FC<SignalMonitorProps> = ({ className }) => {
 
       setError(null);
 
-      
+      // If the backend included phoneUsed, log it in the browser console
+      if (res?.data?.phoneUsed) {
+        console.log("Phone number from server:", res.data.phoneUsed);
+      }
     } catch (err) {
       console.error("Failed to fetch channel list:", err);
 
