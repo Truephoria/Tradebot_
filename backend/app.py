@@ -40,11 +40,15 @@ logger = logging.getLogger(__name__)
 
 CORS(
     app,
-    origins=["https://main.d1bpy75hw1zntc.amplifyapp.com"],
-    supports_credentials=True,
-    allow_headers=["Authorization", "Content-Type"],
-    expose_headers=["Authorization"],  # Expose Authorization header
-    methods=["GET", "POST", "PUT", "OPTIONS"]
+    resources={
+        r"/api/*": {
+            "origins": ["https://main.d1bpy75hw1zntc.amplifyapp.com"],
+            "supports_credentials": True,
+            "allow_headers": ["Authorization", "Content-Type"],
+            "expose_headers": ["Authorization"],
+            "methods": ["GET", "POST", "PUT", "OPTIONS"]
+        }
+    }
 )
 
 socketio = SocketIO(
@@ -547,14 +551,18 @@ def login_user():
 @token_required
 def get_current_user():
     try:
-        user_id = int(g.user_id)  # Already ensured as int in decorator
+        user_id = int(g.user_id)
         logger.debug(f"Fetching user from DynamoDB with id: {user_id}")
-        response = users_table.get_item(Key={'id': user_id})
-        user = response.get('Item')
-        if not user:
+        response = users_table.scan(
+            FilterExpression='id = :id',
+            ExpressionAttributeValues={':id': user_id}
+        )
+        items = response.get('Items', [])
+        if not items:
             logger.warning(f"User not found for ID: {user_id}")
             return jsonify({"error": "User not found"}), 404
 
+        user = items[0]  # Assuming id is unique
         logger.info(f"Current user retrieved: {user['email']}")
         return jsonify({
             "user": {
@@ -565,7 +573,7 @@ def get_current_user():
         })
     except Exception as e:
         logger.error(f"Error in /api/@me: {str(e)}")
-        return jsonify({"error": "Failed to fetch user"}), 500
+        return jsonify({"error": f"Failed to fetch user: {str(e)}"}), 500
 
 @app.route('/api/channels/all', methods=['GET'])
 @token_required  # Added protection
@@ -1153,6 +1161,37 @@ def execute_trade():
     except Exception as e:
         logger.error(f"Failed to queue trade: {str(e)}")
         return jsonify({'status': 'error', 'message': f'Failed to queue trade: {str(e)}'}), 500
+    
+    
+@app.route('/api/trade/history', methods=['GET', 'OPTIONS'])
+@token_required
+def get_trade_history():
+    if request.method == 'OPTIONS':
+        return '', 200  # Handle preflight request
+
+    try:
+        response = trades_table.scan()
+        trades = response.get('Items', [])
+        trade_list = [{
+            'id': trade['id'],
+            'symbol': trade['symbol'],
+            'action': trade['action'],
+            'entry_price': trade['entry_price'],
+            'stop_loss': trade['stop_loss'],
+            'take_profits': json.loads(trade['take_profits']),
+            'volume': trade['volume'],
+            'status': trade['status'],
+            'created_at': trade['created_at'],
+            'updated_at': trade.get('updated_at', '')
+        } for trade in trades]
+        return jsonify({
+            'status': 'success',
+            'trades': trade_list,
+            'total': len(trade_list)
+        })
+    except Exception as e:
+        logger.error(f"Error in get_trade_history: {str(e)}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # ----------------------------------------------------------------------
 # Main
