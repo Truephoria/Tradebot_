@@ -82,40 +82,47 @@ pending_code_hash = None  # used to store phone_code_hash once we send an SMS co
 
 def get_telegram_credentials():
     """
-    Fetch Telegram credentials from the 'Settings' table in DynamoDB and
+    Fetch Telegram credentials from the 'Settings' table in DynamoDB where
+    the keys are actually 'apiId', 'apiHash', and 'phoneNumber', then
     initialize a Telethon client using a local 'session.session' file.
-
-    This merges the old code's approach of 'session' with the new code's
-    dynamic credential loading, so no .env is needed.
     """
     global API_ID, API_HASH, PHONE_NUMBER, telegram_client
-    logger.info(f"Telegram credentials from DB => API_ID={API_ID}, API_HASH={API_HASH}, PHONE_NUMBER={PHONE_NUMBER}")
+
     # Retrieve the relevant settings
     response = settings_table.scan(
         FilterExpression='key IN (:apiId, :apiHash, :phoneNumber)',
         ExpressionAttributeValues={
-            ':api_id': 'apiId',
-            ':api_hash': 'apiHash',
-            ':phone': 'phoneNumber'
+            ':apiId': 'apiId',
+            ':apiHash': 'apiHash',
+            ':phoneNumber': 'phoneNumber'
         }
     )
     items = response.get('Items', [])
     creds = {item['key']: item['value'] for item in items}
 
-    API_ID = creds.get('api_id')
-    API_HASH = creds.get('api_hash')
-    PHONE_NUMBER = creds.get('phone')
+    API_ID = creds.get('apiId')
+    API_HASH = creds.get('apiHash')
+    PHONE_NUMBER = creds.get('phoneNumber')
 
     if not API_ID or not API_HASH or not PHONE_NUMBER:
-        logger.error(f"Missing Telegram credentials in Settings: API_ID={API_ID}, API_HASH={API_HASH}, PHONE_NUMBER={PHONE_NUMBER}")
+        logger.error(
+            f"Missing Telegram credentials in Settings: "
+            f"API_ID={API_ID}, API_HASH={API_HASH}, PHONE_NUMBER={PHONE_NUMBER}"
+        )
         raise ValueError("apiId, apiHash, and phoneNumber must be set in Settings.")
 
+    # Log what we found
+    logger.info(
+        f"Telegram credentials from DB => "
+        f"API_ID={API_ID}, API_HASH={API_HASH}, PHONE_NUMBER={PHONE_NUMBER}"
+    )
+
     API_ID = int(API_ID)  # ensure it's an int
+
     # Create the Telethon client using a local file named 'session.session'
     if telegram_client is None:
         telegram_client = TelegramClient('session.session', API_ID, API_HASH)
         logger.info("Telegram client initialized from DynamoDB settings.")
-
 
 async def fetch_subscribed_channels():
     global pending_code_hash
@@ -130,7 +137,7 @@ async def fetch_subscribed_channels():
             logger.warning("Session invalid; sending SMS code request.")
             code_request = await client.send_code_request(
                 phone=PHONE_NUMBER,
-                force_sms=True  # <-- ensures an actual SMS is sent
+                force_sms=True  # ensures an actual SMS is sent
             )
             pending_code_hash = code_request.phone_code_hash
             raise Exception("Verification code required. Use /telegram/verify_code with the code.")
@@ -142,8 +149,6 @@ async def fetch_subscribed_channels():
             for dialog in dialogs if dialog.is_channel
         ]
         return channels
-
-
 
 def start_monitoring(channels):
     """
@@ -157,17 +162,17 @@ def start_monitoring(channels):
         get_telegram_credentials()
         async with TelegramClient('session.session', API_ID, API_HASH) as client:
             if not await client.is_user_authorized():
-             print(f"Using phone number: {PHONE_NUMBER!r} for SMS request.")
-             logger.warning("Session invalid (monitor); sending SMS code request.")
-             code_request = await client.send_code_request(
-                phone=PHONE_NUMBER,
-                force_sms=True  # <-- forcibly send SMS instead of in-app
-            )
-            pending_code_hash = code_request.phone_code_hash
-            raise Exception("Verification code needed. Use /telegram/verify_code with the code.")
+                print(f"Using phone number: {PHONE_NUMBER!r} for SMS request.")
+                logger.warning("Session invalid (monitor); sending SMS code request.")
+                code_request = await client.send_code_request(
+                    phone=PHONE_NUMBER,
+                    force_sms=True
+                )
+                pending_code_hash = code_request.phone_code_hash
+                raise Exception("Verification code needed. Use /telegram/verify_code with the code.")
 
-        @client.on(events.NewMessage(chats=channels_list))
-        async def handler(event):
+            @client.on(events.NewMessage(chats=channels_list))
+            async def handler(event):
                 chat = await event.get_chat()
                 channel_id = chat.id
                 message_text = event.message.message
@@ -180,7 +185,7 @@ def start_monitoring(channels):
                     logger.info(f"Parsed signal: {parsed_signal}")
                     socketio.emit('new_signal', parsed_signal)
 
-        await client.run_until_disconnected()
+            await client.run_until_disconnected()
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -190,7 +195,6 @@ def start_monitoring(channels):
         logger.error(f"Monitoring failed or code needed: {str(e)}")
     finally:
         loop.close()
-
 
 async def sign_in_with_code(code):
     """
@@ -217,7 +221,6 @@ async def sign_in_with_code(code):
         finally:
             if client.is_connected():
                 await client.disconnect()
-
 
 # ----------------------------------------------------------------------
 # Enums
