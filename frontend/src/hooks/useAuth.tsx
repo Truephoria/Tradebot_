@@ -70,7 +70,7 @@ export default function useAuth() {
         clearToken();
         localStorage.removeItem('token');
         if (pathname !== '/auth') {
-          router.push('/auth');
+          router.push('/login');
         }
         setIsCheckingAuth(false);
         return;
