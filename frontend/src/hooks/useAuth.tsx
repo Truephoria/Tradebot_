@@ -70,7 +70,7 @@ export default function useAuth() {
         clearToken();
         localStorage.removeItem('token');
         if (pathname !== '/auth') {
-          router.push('/login');
+          router.push('/auth');
         }
         setIsCheckingAuth(false);
         return;
@@ -79,7 +79,9 @@ export default function useAuth() {
       try {
         const res = await axios.get('/api/@me');
         setUser(res.data.user);
-        if (pathname === '/auth') {
+
+        // ✅ Redirect ONLY if valid user and you're on /auth
+        if (pathname === '/auth' && res.data.user) {
           const from = new URLSearchParams(window.location.search).get('from') || '/';
           router.push(from);
         }
@@ -87,7 +89,9 @@ export default function useAuth() {
         console.error('Auth check failed:', err);
         clearToken();
         setUser(null);
-        router.push('/login');
+        if (pathname !== '/auth') {
+          router.push('/auth');
+        }
       } finally {
         setIsCheckingAuth(false);
       }
@@ -113,7 +117,7 @@ export default function useAuth() {
     }
   };
 
-  const register = async (userData: { name: string; email: string; password: string; }): Promise<User> => {
+  const register = async (userData: { name: string; email: string; password: string }): Promise<User> => {
     try {
       setLoading(true);
       const res = await axios.post('/api/register', userData);
@@ -132,13 +136,13 @@ export default function useAuth() {
   const logout = useCallback(() => {
     clearToken();
     setUser(null);
-    router.push('/login');
+    router.push('/auth');
   }, [clearToken, router]);
 
   return {
     user,
     token,
-    isAuthenticated: !!token,
+    isAuthenticated: !!user && !!token,
     isCheckingAuth,
     loading,
     error,

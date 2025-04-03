@@ -18,7 +18,20 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import useAuth from '@/hooks/useAuth'; // Update import if needed
 
+
+
+
 export default function Auth() {
+
+  const { isCheckingAuth, isAuthenticated } = useAuth();
+
+if (isCheckingAuth) return null; // Or a spinner
+if (isAuthenticated) {
+  if (typeof window !== 'undefined') {
+    window.location.replace('/');
+  }
+  return null;
+}
   const router = useRouter();
   const { login, register, loading, error } = useAuth(); // Use updated hook
   const [showPassword, setShowPassword] = useState(false);
