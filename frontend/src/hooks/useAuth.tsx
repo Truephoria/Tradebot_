@@ -87,7 +87,7 @@ export default function useAuth() {
         console.error('Auth check failed:', err);
         clearToken();
         setUser(null);
-        router.push('/auth');
+        router.push('/login');
       } finally {
         setIsCheckingAuth(false);
       }
@@ -132,7 +132,7 @@ export default function useAuth() {
   const logout = useCallback(() => {
     clearToken();
     setUser(null);
-    router.push('/auth');
+    router.push('/login');
   }, [clearToken, router]);
 
   return {

@@ -43,38 +43,60 @@ export const useSettingStore = create<SettingState>((set) => ({
   // Fetch risk/trading settings
   getSettings: async () => {
     set({ isLoading: true });
-    try {
+const token = localStorage.getItem('token');
+    if (!token) {
+      console.warn("No token, skipping settings request");
+      return;
+    }
+
+try {
+  const payload = JSON.parse(atob(token.split('.')[1]));
+  if (payload.exp < Math.floor(Date.now() / 1000)) {
+    console.warn("Token expired, skipping settings request");
+    return;
+  }
+} catch (err) {
+  console.error("Token check failed", err);
+  return;
+}
       const response = await axios.get("/api/settings");
       set((state) => ({
         settings: { ...state.settings, ...response.data.settings },
         error: null,
       }));
       console.log("Settings fetched:", response.data.status);
-    } catch (error) {
-      console.error("Error fetching settings:", error);
-      set({ error: "Failed to fetch settings" });
-      throw error;
-    } finally {
+   
       set({ isLoading: false });
-    }
+    
   },
   // Update risk/trading settings
   updateSettings: async (newSettings) => {
     set({ isLoading: true });
-    try {
+    const token = localStorage.getItem('token');
+    if (!token) {
+      console.warn("No token, skipping settings request");
+      return;
+    }
+
+try {
+  const payload = JSON.parse(atob(token.split('.')[1]));
+  if (payload.exp < Math.floor(Date.now() / 1000)) {
+    console.warn("Token expired, skipping settings request");
+    return;
+  }
+} catch (err) {
+  console.error("Token check failed", err);
+  return;
+}
       const response = await axios.post("/api/settings", newSettings);
       set((state) => ({
         settings: { ...state.settings, ...response.data.settings },
         error: null,
       }));
       console.log("Settings updated:", response.data.status);
-    } catch (error) {
-      console.error("Error updating settings:", error);
-      set({ error: "Failed to update settings" });
-      throw error;
-    } finally {
+    
       set({ isLoading: false });
-    }
+    
   },
  
 

@@ -25,6 +25,8 @@ from telethon.sessions import StringSession
 from openai import OpenAI
 from threading import Thread
 
+REFRESH_SECRET = 'your-refresh-secret-key'  # Use a different secret than access token!
+
 # ----------------------------------------------------------------------
 # ENV & FLASK SETUP
 # ----------------------------------------------------------------------
@@ -432,6 +434,30 @@ def token_required(f):
 # ----------------------------------------------------------------------
 # API Routes
 # ----------------------------------------------------------------------
+@app.route('/api/refresh', methods=['POST'])
+def refresh_token():
+    refresh_token = request.json.get('refreshToken')
+    if not refresh_token:
+        return jsonify({'error': 'Missing refresh token'}), 400
+
+    try:
+        payload = jwt.decode(refresh_token, REFRESH_SECRET, algorithms=['HS256'])
+        user_id = payload.get('user_id')
+        if not user_id:
+            return jsonify({'error': 'Invalid refresh token payload'}), 401
+
+        new_token = jwt.encode({
+            'user_id': user_id,
+            'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=15)
+        }, SECRET_KEY, algorithm='HS256')
+
+        return jsonify({'token': new_token})
+    except jwt.ExpiredSignatureError:
+        return jsonify({'error': 'Refresh token expired'}), 401
+    except jwt.InvalidTokenError:
+        return jsonify({'error': 'Invalid refresh token'}), 401
+
+
 @app.route("/api/register", methods=["POST"])
 def register_user():
     name = request.json["name"]
@@ -634,6 +660,8 @@ def get_settings():
     except Exception as e:
         logger.error(f"Error fetching settings: {str(e)}")
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
 
 @app.route('/api/settings', methods=['POST', 'PUT'])
 @token_required

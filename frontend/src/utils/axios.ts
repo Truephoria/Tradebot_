@@ -1,4 +1,3 @@
-// frontend/src/utils/axios.ts
 import axios from "axios";
 import { useAuthStore } from "@/stores/auth-store";
 
@@ -8,7 +7,7 @@ const axiosInstance = axios.create({
   withCredentials: true,
 });
 
-// Automatically add token to headers
+// REQUEST INTERCEPTOR
 axiosInstance.interceptors.request.use((config) => {
   const token = useAuthStore.getState().token;
   if (token) {
@@ -18,21 +17,43 @@ axiosInstance.interceptors.request.use((config) => {
   return config;
 });
 
-// Auto-clear token and redirect on 401
+// RESPONSE INTERCEPTOR
 axiosInstance.interceptors.response.use(
   (res) => res,
-  (err) => {
+  async (err) => {
+    const originalRequest = err.config;
+
     if (
-      typeof window !== 'undefined' &&
-      err?.response?.status === 401
+      err.response?.status === 401 &&
+      !originalRequest._retry &&
+      typeof window !== 'undefined'
     ) {
-      const pathname = window.location.pathname;
-      if (!pathname.startsWith('/auth')) {
+      originalRequest._retry = true;
+
+      const refreshToken = localStorage.getItem('refreshToken');
+      if (!refreshToken) {
         useAuthStore.getState().clearToken();
-        localStorage.removeItem('token');
-        window.location.replace('/auth'); // soft reload
+        window.location.replace('/login'); // 👈 send to login instead of /auth
+        return Promise.reject(err);
+      }
+
+      try {
+        const res = await axios.post("https://pkbk36mqmi.us-east-2.awsapprunner.com/api/refresh", {
+          refreshToken
+        });
+
+        const newToken = res.data.token;
+        useAuthStore.getState().setToken(newToken, refreshToken);
+        originalRequest.headers.Authorization = `Bearer ${newToken}`;
+
+        return axiosInstance(originalRequest);
+      } catch (refreshError) {
+        useAuthStore.getState().clearToken();
+        window.location.replace('/login'); // 👈 send to login instead of /auth
+        return Promise.reject(refreshError);
       }
     }
+
     return Promise.reject(err);
   }
 );
