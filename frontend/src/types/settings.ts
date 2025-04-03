@@ -1,3 +1,4 @@
+
 // frontend/src/types/settings.ts
 
 export type SettingsType = {

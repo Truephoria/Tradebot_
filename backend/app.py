@@ -1,3 +1,4 @@
+
 import os
 import json
 import uuid
@@ -26,7 +27,7 @@ from openai import OpenAI
 from threading import Thread
 
 # ----------------------------------------------------------------------
-# 1. ENV & FLASK SETUP
+# ENV & FLASK SETUP
 # ----------------------------------------------------------------------
 load_dotenv()
 
@@ -51,18 +52,16 @@ socketio = SocketIO(
     methods=["GET", "POST", "PUT", "OPTIONS"]
 )
 
-# Hard-coded secret for demonstration only:
-secret_key_value = "12345"
+secret_key_value = os.getenv("SECRET_KEY", "fallback-secret")
 app.config['SECRET_KEY'] = secret_key_value
 SECRET_KEY = secret_key_value
 
 bcrypt = Bcrypt(app)
 
-# If you have an OpenAI key in .env, you can load it here
 openai_Client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # ----------------------------------------------------------------------
-# 2. DynamoDB Setup & Tables
+# DynamoDB Tables
 # ----------------------------------------------------------------------
 dynamodb = boto3.resource('dynamodb')
 
@@ -74,7 +73,7 @@ settings_table = dynamodb.Table('Settings')
 trades_table = dynamodb.Table('Trades')
 
 # ----------------------------------------------------------------------
-# 3. Telegram Configuration
+# Telegram Configuration (Reverted to Old Style, but improved)
 # ----------------------------------------------------------------------
 API_ID = None
 API_HASH = None
@@ -84,62 +83,56 @@ pending_code_hash = None  # used to store phone_code_hash once we send an SMS co
 
 def get_telegram_credentials():
     """
-    Fetch Telegram credentials from 'Settings' (apiId, apiHash, phoneNumber).
-    Initialize Telethon client using 'session.session'.
+    Fetch Telegram credentials from the 'Settings' table in DynamoDB and
+    initialize a Telethon client using a local 'session.session' file.
+
+    This merges the old code's approach of 'session' with the new code's
+    dynamic credential loading, so no .env is needed.
     """
     global API_ID, API_HASH, PHONE_NUMBER, telegram_client
 
+    # Retrieve the relevant settings
     response = settings_table.scan(
-        FilterExpression='key IN (:apiId, :apiHash, :phoneNumber)',
+        FilterExpression='key IN (:api_id, :api_hash, :phone)',
         ExpressionAttributeValues={
-            ':apiId': 'apiId',
-            ':apiHash': 'apiHash',
-            ':phoneNumber': 'phoneNumber'
+            ':api_id': 'telegramApiId',
+            ':api_hash': 'telegramApiHash',
+            ':phone': 'telegramPhoneNumber'
         }
     )
     items = response.get('Items', [])
     creds = {item['key']: item['value'] for item in items}
 
-    API_ID = creds.get('apiId')
-    API_HASH = creds.get('apiHash')
-    PHONE_NUMBER = creds.get('phoneNumber')
+    API_ID = creds.get('telegramApiId')
+    API_HASH = creds.get('telegramApiHash')
+    PHONE_NUMBER = creds.get('telegramPhoneNumber')
 
     if not API_ID or not API_HASH or not PHONE_NUMBER:
-        logger.error(
-            f"Missing Telegram credentials in Settings: "
-            f"API_ID={API_ID}, API_HASH={API_HASH}, PHONE_NUMBER={PHONE_NUMBER}"
-        )
-        raise ValueError("apiId, apiHash, and phoneNumber must be set in Settings.")
+        logger.error(f"Missing Telegram credentials in Settings: API_ID={API_ID}, API_HASH={API_HASH}, PHONE_NUMBER={PHONE_NUMBER}")
+        raise ValueError("telegramApiId, telegramApiHash, and telegramPhoneNumber must be set in Settings.")
 
-    logger.info(
-        f"Telegram credentials => API_ID={API_ID}, API_HASH={API_HASH}, PHONE_NUMBER={PHONE_NUMBER}"
-    )
-
-    API_ID = int(API_ID)
+    API_ID = int(API_ID)  # ensure it's an int
+    # Create the Telethon client using a local file named 'session.session'
     if telegram_client is None:
         telegram_client = TelegramClient('session.session', API_ID, API_HASH)
         logger.info("Telegram client initialized from DynamoDB settings.")
 
-async def fetch_subscribed_channels():
-    """
-    Check if we're already authorized with Telethon.
-    If not, request SMS code. Otherwise, return channel dialogs.
-    """
-    global pending_code_hash
-    logger.info("Fetching subscribed channels with old logic.")
 
+async def fetch_subscribed_channels():
+    global pending_code_hash
+    logger.info("Fetching subscribed channels with old logic (improved).")
+
+    # Ensure we have a fresh client
     get_telegram_credentials()
 
     async with TelegramClient('session.session', API_ID, API_HASH) as client:
         if not await client.is_user_authorized():
-            logger.info(f"Using phone number: {PHONE_NUMBER!r} for SMS request.")
             logger.warning("Session invalid; sending SMS code request.")
             code_request = await client.send_code_request(
                 phone=PHONE_NUMBER,
-                force_sms=True
+                force_sms=True  # <-- ensures an actual SMS is sent
             )
             pending_code_hash = code_request.phone_code_hash
-            # If we're here, user must verify via /telegram/verify_code
             raise Exception("Verification code required. Use /telegram/verify_code with the code.")
 
         # If authorized, fetch channel dialogs
@@ -150,32 +143,34 @@ async def fetch_subscribed_channels():
         ]
         return channels
 
+
+
 def start_monitoring(channels):
     """
-    Start monitoring given channel IDs in a separate async loop.
-    If session isn't authorized, it triggers SMS code request.
+    Old code style for monitoring: 'async with TelegramClient(...)' again.
+    If not authorized, we do the same SMS code request approach.
     """
     async def monitor(channels_list):
         global pending_code_hash
-        logger.info(f"Starting monitor for channels: {channels_list}")
+        logger.info(f"Starting monitor with old logic for channels: {channels_list}")
 
         get_telegram_credentials()
         async with TelegramClient('session.session', API_ID, API_HASH) as client:
             if not await client.is_user_authorized():
-                logger.warning("Session invalid (monitor); sending SMS code request.")
-                code_request = await client.send_code_request(
-                    phone=PHONE_NUMBER,
-                    force_sms=True
-                )
-                pending_code_hash = code_request.phone_code_hash
-                raise Exception("Verification code needed. /telegram/verify_code")
+             logger.warning("Session invalid (monitor); sending SMS code request.")
+             code_request = await client.send_code_request(
+             phone=PHONE_NUMBER,
+             force_sms=True  # <-- forcibly send SMS instead of in-app
+            )
+            pending_code_hash = code_request.phone_code_hash
+            raise Exception("Verification code needed. Use /telegram/verify_code with the code.")
 
-            @client.on(events.NewMessage(chats=channels_list))
-            async def handler(event):
+        @client.on(events.NewMessage(chats=channels_list))
+        async def handler(event):
                 chat = await event.get_chat()
                 channel_id = chat.id
                 message_text = event.message.message
-                logger.info(f"Received msg from channel {channel_id}: {message_text}")
+                logger.info(f"Received message from channel {channel_id}: {message_text}")
                 if "buy" in message_text.lower() or "sell" in message_text.lower():
                     global signalStatus
                     signalStatus = SignalStatus.UPDATED
@@ -184,7 +179,7 @@ def start_monitoring(channels):
                     logger.info(f"Parsed signal: {parsed_signal}")
                     socketio.emit('new_signal', parsed_signal)
 
-            await client.run_until_disconnected()
+        await client.run_until_disconnected()
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -195,23 +190,26 @@ def start_monitoring(channels):
     finally:
         loop.close()
 
+
 async def sign_in_with_code(code):
     """
-    Called by /telegram/verify_code after user enters SMS code.
+    Called by /telegram/verify_code. Instead of 'input()', the user provides
+    the code via an HTTP request. This finishes sign-in, storing the session
+    in 'session.session'.
     """
     global pending_code_hash
-    logger.info("Completing sign-in with code (old logic).")
+    logger.info("Completing sign-in with user-provided code (old logic, improved).")
 
-    get_telegram_credentials()
+    get_telegram_credentials()  # Ensure the credentials and telegram_client
     async with TelegramClient('session.session', API_ID, API_HASH) as client:
         await client.connect()
         try:
             await client.sign_in(PHONE_NUMBER, code, phone_code_hash=pending_code_hash)
-            logger.info("Successfully signed in; session.session updated.")
+            logger.info("Successfully signed in; session saved to session.session.")
             pending_code_hash = None
         except errors.SessionPasswordNeededError:
-            logger.error("2FA required; not supported in this snippet.")
-            raise Exception("Two-factor authentication required.")
+            logger.error("Two-factor authentication required; not supported here.")
+            raise Exception("Two-factor authentication required; please disable it or handle manually.")
         except Exception as e:
             logger.error(f"Sign-in with code failed: {str(e)}")
             raise
@@ -219,8 +217,9 @@ async def sign_in_with_code(code):
             if client.is_connected():
                 await client.disconnect()
 
+
 # ----------------------------------------------------------------------
-# 4. Enums & statuses
+# Enums
 # ----------------------------------------------------------------------
 class SignalStatus(Enum):
     IDLE = 0
@@ -235,7 +234,7 @@ class SettingStatus(Enum):
 settingStatus = SettingStatus.IDLE
 
 # ----------------------------------------------------------------------
-# 5. DB INIT & HELPERS
+# DB INIT & GENERAL HELPERS
 # ----------------------------------------------------------------------
 def init_db():
     default_settings = [
@@ -249,9 +248,9 @@ def init_db():
         ('riskValue', '1.5'),
         ('tradingHoursStart', '08:00'),
         ('tradingHoursEnd', '16:00'),
-        ('apiId', ''),
-        ('apiHash', ''),
-        ('phoneNumber', '')
+        ('telegramApiId', ''),
+        ('telegramApiHash', ''),
+        ('telegramPhoneNumber', '')
     ]
     for key, value in default_settings:
         try:
@@ -264,18 +263,14 @@ def init_db():
     logger.info("DynamoDB initialized with default settings")
 
 def add_channels(channels):
-    """
-    Replaces all Channels in DB with the fetched ones,
-    sets is_active=False initially.
-    """
     try:
         response = channels_table.scan()
         for item in response.get('Items', []):
             channels_table.delete_item(Key={'channel_id': item['channel_id']})
-        for ch in channels:
+        for channel in channels:
             channels_table.put_item(Item={
-                'channel_id': ch['id'],
-                'channel_name': ch['name'],
+                'channel_id': channel['id'],
+                'channel_name': channel['name'],
                 'is_active': False
             })
         logger.info(f"Added {len(channels)} channels to DynamoDB")
@@ -288,15 +283,13 @@ def get_all_channels():
     try:
         response = channels_table.scan()
         all_channels = response.get('Items', [])
-        active_channels = [ch for ch in all_channels if ch['is_active']]
+        active_channels = [channel for channel in all_channels if channel['is_active']]
         logger.info(f"Retrieved {len(all_channels)} channels, {len(active_channels)} active")
-        return [
-            {
-                'channel_id': ch['channel_id'],
-                'channel_name': ch['channel_name'],
-                'is_active': ch['is_active']
-            } for ch in all_channels
-        ]
+        return [{
+            'channel_id': channel['channel_id'],
+            'channel_name': channel['channel_name'],
+            'is_active': channel['is_active']
+        } for channel in all_channels]
     except Exception as e:
         logger.error(f"Error retrieving channels: {str(e)}")
         raise e
@@ -305,8 +298,8 @@ def get_channels_is_active(active_only=True):
     try:
         response = channels_table.scan()
         all_channels = response.get('Items', [])
-        active_channels = [c for c in all_channels if c['is_active'] == active_only]
-        return [c['channel_id'] for c in active_channels]
+        active_channels = [channel for channel in all_channels if channel['is_active'] == active_only]
+        return [channel['channel_id'] for channel in active_channels]
     except Exception as e:
         logger.error(f"Error retrieving active channels: {str(e)}")
         raise e
@@ -322,15 +315,15 @@ def update_channel_status(channel_id, is_active):
         logger.info(f"Updated channel {channel_id} status to {is_active}")
         return True
     except ClientError as e:
-        logger.warning(f"Channel {channel_id} not found: {str(e)}")
+        logger.warning(f"Channel {channel_id} not found for status update: {str(e)}")
         return False
 
 def get_current_settings():
     try:
         response = settings_table.scan()
-        items = response.get('Items', [])
+        settings = response.get('Items', [])
         settings_dict = {}
-        for setting in items:
+        for setting in settings:
             key = setting['key']
             value = setting['value']
             if key in ['botEnabled', 'enableTrailingStop']:
@@ -372,9 +365,6 @@ def update_setting(key, value):
         logger.error(f"Error updating setting {key}: {str(e)}")
         return False
 
-# ----------------------------------------------------------------------
-# 6. Signal methods
-# ----------------------------------------------------------------------
 def create_signal(signal_data):
     required_fields = ['symbol', 'entry_price', 'action', 'stop_loss']
     for field in required_fields:
@@ -418,7 +408,7 @@ def get_latest_signal():
             FilterExpression='signal_id = :sid',
             ExpressionAttributeValues={':sid': latest_signal['id']}
         )
-        tps = [tp['price'] for tp in tp_response.get('Items', [])]
+        take_profits = [tp['price'] for tp in tp_response.get('Items', [])]
 
         return {
             'channel': latest_signal['channel'],
@@ -426,7 +416,7 @@ def get_latest_signal():
             'entry_price': latest_signal['entry_price'],
             'action': latest_signal['action'],
             'stop_loss': latest_signal['stop_loss'],
-            'take_profits': tps,
+            'take_profits': take_profits,
             'created_at': latest_signal['created_at']
         }
     except Exception as e:
@@ -434,61 +424,48 @@ def get_latest_signal():
         raise e
 
 def update_signal(channel_id, updates):
-    """
-    In your example, you always pass channel_id=1 for a single signal.
-    This code updates the first matching signal in table for that channel.
-    """
     try:
-        resp = signals_table.scan(
+        response = signals_table.scan(
             FilterExpression='channel = :cid',
             ExpressionAttributeValues={':cid': channel_id}
         )
-        signals_found = resp.get('Items', [])
-        if not signals_found:
+        signals = response.get('Items', [])
+        if not signals:
             return False
 
-        signal = signals_found[0]
+        signal = signals[0]
         signal_id = signal['id']
 
         update_expression = 'SET '
-        expr_values = {}
-
+        expression_attribute_values = {}
         if 'symbol' in updates:
             update_expression += 'symbol = :symbol, '
-            expr_values[':symbol'] = updates['symbol']
-
+            expression_attribute_values[':symbol'] = updates['symbol']
         if 'entry_price' in updates:
             update_expression += 'entry_price = :entry_price, '
-            expr_values[':entry_price'] = float(updates['entry_price'])
-
+            expression_attribute_values[':entry_price'] = float(updates['entry_price'])
         if 'action' in updates:
             update_expression += 'action = :action, '
-            expr_values[':action'] = updates['action']
-
+            expression_attribute_values[':action'] = updates['action']
         if 'stop_loss' in updates:
             update_expression += 'stop_loss = :stop_loss, '
-            expr_values[':stop_loss'] = float(updates['stop_loss'])
-
-        # always update 'created_at' to the latest time
+            expression_attribute_values[':stop_loss'] = float(updates['stop_loss'])
         update_expression += 'created_at = :created_at'
-        expr_values[':created_at'] = datetime.utcnow().isoformat()
+        expression_attribute_values[':created_at'] = datetime.utcnow().isoformat()
 
         signals_table.update_item(
             Key={'id': signal_id},
             UpdateExpression=update_expression,
-            ExpressionAttributeValues=expr_values
+            ExpressionAttributeValues=expression_attribute_values
         )
 
         if 'take_profits' in updates:
-            # remove old TPs
-            tp_resp = take_profits_table.scan(
+            tp_response = take_profits_table.scan(
                 FilterExpression='signal_id = :sid',
                 ExpressionAttributeValues={':sid': signal_id}
             )
-            for tp in tp_resp.get('Items', []):
+            for tp in tp_response.get('Items', []):
                 take_profits_table.delete_item(Key={'id': tp['id']})
-
-            # add new ones
             for tp in updates['take_profits']:
                 tp_id = int(uuid.uuid4().int & (1 << 31) - 1)
                 take_profits_table.put_item(Item={
@@ -504,7 +481,7 @@ def update_signal(channel_id, updates):
         return False
 
 # ----------------------------------------------------------------------
-# 7. JWT Decorator
+# JWT AUTH DECORATOR
 # ----------------------------------------------------------------------
 def token_required(f):
     @wraps(f)
@@ -513,52 +490,45 @@ def token_required(f):
         if not auth_header or not auth_header.startswith('Bearer '):
             logger.warning("No valid Authorization header provided")
             return jsonify({"error": "Unauthorized"}), 401
-
         token = auth_header.split(' ')[1]
         try:
             payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
             g.user_id = payload['user_id']
-            logger.info("Token validated, user ID: %s", g.user_id)
+            logger.info("Token validated successfully, user ID: %s", g.user_id)
         except jwt.ExpiredSignatureError:
-            logger.warning("Token expired")
+            logger.warning("Token has expired")
             return jsonify({"error": "Token expired"}), 401
         except jwt.InvalidTokenError:
             logger.warning("Invalid token provided")
             return jsonify({"error": "Invalid token"}), 401
-
         return f(*args, **kwargs)
     return decorated
 
 # ----------------------------------------------------------------------
-# 8. API Routes
+# API Routes (identical to your new code)
 # ----------------------------------------------------------------------
 @app.route("/api/register", methods=["POST"])
 def register_user():
-    """
-    Basic user registration: name, email, password -> store in Users table,
-    return JWT on success
-    """
     name = request.json["name"]
     email = request.json["email"]
     password = request.json["password"]
     try:
-        # check if user exists
-        resp = users_table.scan(
+        response = users_table.scan(
             FilterExpression='email = :email',
             ExpressionAttributeValues={':email': email}
         )
-        if resp.get('Items', []):
+        if response.get('Items', []):
             logger.warning(f"Registration attempt with existing email: {email}")
             return jsonify({"error": "User already exists"}), 409
 
         user_id = int(uuid.uuid4().int & (1 << 31) - 1)
-        hashed_pw = bcrypt.generate_password_hash(password).decode('utf-8')
+        hashed_password = bcrypt.generate_password_hash(password).decode('utf-8')
 
         users_table.put_item(Item={
             'id': user_id,
             'name': name,
             'email': email,
-            'password': hashed_pw
+            'password': hashed_password
         })
 
         token = jwt.encode({
@@ -577,17 +547,14 @@ def register_user():
 
 @app.route("/api/login", methods=["POST"])
 def login_user():
-    """
-    Check user email/password, return JWT if valid
-    """
     email = request.json["email"]
     password = request.json["password"]
     try:
-        resp = users_table.scan(
+        response = users_table.scan(
             FilterExpression='email = :email',
             ExpressionAttributeValues={':email': email}
         )
-        user = resp.get('Items', [None])[0]
+        user = response.get('Items', [None])[0]
         if not user:
             logger.warning(f"Login attempt with non-existent email: {email}")
             return jsonify({"error": "Can not find user. Please sign up."}), 401
@@ -596,7 +563,7 @@ def login_user():
             logger.warning(f"Invalid password for email: {email}")
             return jsonify({"error": "Invalid email or password."}), 401
 
-        user_id = str(user['id'])
+        user_id = str(user['id']) if 'id' in user else None
         user_name = user.get('name', '')
         user_email = user['email']
 
@@ -605,31 +572,28 @@ def login_user():
             'exp': datetime.utcnow() + timedelta(hours=24)
         }, SECRET_KEY, algorithm='HS256')
 
-        current_set = get_current_settings()
+        settings = get_current_settings()
         logger.info(f"User logged in: {email}")
         return jsonify({
             "user": {"id": user_id, "name": user_name, "email": user_email},
             "token": token,
-            "settings": current_set
+            "settings": settings
         })
     except Exception as e:
         logger.error(f"Error logging in user: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
 @app.route("/api/@me")
-#@token_required
+@token_required
 def get_current_user():
-    """
-    Return user info based on JWT token
-    """
     user_id = g.user_id
-    resp = users_table.get_item(Key={'id': user_id})
-    user = resp.get('Item')
+    response = users_table.get_item(Key={'id': user_id})
+    user = response.get('Item')
     if not user:
         logger.warning(f"User not found for ID: {user_id}")
         return jsonify({"error": "User not found"}), 404
 
-    final_id = user['id']
+    final_id = int(user['id']) if isinstance(user['id'], (int, float)) else user['id']
     logger.info(f"Current user retrieved: {user['email']}")
     return jsonify({
         "user": {"id": final_id, "name": user["name"], "email": user["email"]}
@@ -637,19 +601,15 @@ def get_current_user():
 
 @app.route('/api/channels/all', methods=['GET'])
 def get_channels_endpoint():
-    """
-    Return all channels + which are active. No token check here if you want
-    it public, or add @token_required if you prefer
-    """
     try:
-        chs = get_all_channels()
-        active_chs = get_channels_is_active(True)
-        if chs:
+        channels = get_all_channels()
+        active_channels = get_channels_is_active(True)
+        if channels:
             return jsonify({
                 'status': 'success',
-                'count': len(chs),
-                'channels': chs,
-                'active_channels': active_chs
+                'count': len(channels),
+                'channels': channels,
+                'active_channels': active_channels
             })
         return jsonify({
             'status': 'success',
@@ -660,29 +620,28 @@ def get_channels_endpoint():
         logger.error(f"Error in get_channels_endpoint: {str(e)}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+# ----------------------------------------------------------------------
+# Replacing the new code's route with old code logic (fetch_subscribed_channels)
+# ----------------------------------------------------------------------
 @app.route('/api/channels', methods=['GET'])
-#@token_required
+@token_required
 def add_channels_endpoint():
     """
-    - Calls fetch_subscribed_channels (Telethon).
-    - If we need a code, raise => 401. Otherwise store channels in DB.
-    - Return phoneUsed in the JSON so front end can see phone number if desired.
+    We call our 'fetch_subscribed_channels' (old logic, improved).
+    If we need a code, we raise an exception -> HTTP 401. 
+    Otherwise, we fetch & add channels.
     """
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        tele_channels = loop.run_until_complete(fetch_subscribed_channels())
+        channels = loop.run_until_complete(fetch_subscribed_channels())
         loop.close()
 
-        logger.info(f"Got Telegram channels. PHONE_NUMBER => {PHONE_NUMBER!r}")
-
-        # Add them to DB (is_active=False)
-        all_added = add_channels(tele_channels)
+        channels = add_channels(channels)
         return jsonify({
             'status': 'success',
-            'count': len(all_added),
-            'channels': all_added,
-            'phoneUsed': PHONE_NUMBER
+            'count': len(channels),
+            'channels': channels
         })
     except Exception as e:
         logger.error(f"Error in add_channels_endpoint: {str(e)}")
@@ -692,11 +651,11 @@ def add_channels_endpoint():
         }), 401
 
 @app.route('/telegram/verify_code', methods=['POST'])
-#@token_required
+@token_required
 def verify_telegram_code():
     """
-    POST { "code": "12345" }
-    Calls sign_in_with_code to complete the Telethon login
+    The user calls this route with {"code": "..."} after receiving the SMS.
+    This finalizes sign-in using sign_in_with_code (old approach, improved).
     """
     try:
         data = request.get_json()
@@ -722,11 +681,9 @@ def verify_telegram_code():
 def update_channel_status_endpoint(channel_id):
     data = request.get_json()
     if 'is_active' not in data:
-        logger.warning("Missing is_active param in update_channel_status_endpoint")
+        logger.warning("Missing is_active parameter in update_channel_status_endpoint")
         return jsonify({'error': 'is_active parameter required'}), 400
-
-    updated = update_channel_status(channel_id, data['is_active'])
-    if updated:
+    if update_channel_status(channel_id, data['is_active']):
         return jsonify({
             'status': 'success',
             'message': f'Channel {channel_id} updated',
@@ -735,24 +692,18 @@ def update_channel_status_endpoint(channel_id):
     return jsonify({'error': 'Channel not found'}), 404
 
 @app.route('/api/settings', methods=['GET'])
-#@token_required
+@token_required
 def get_settings():
-    """
-    Return all current settings
-    """
     try:
-        st = get_current_settings()
-        return jsonify({"status": "success", "settings": st}), 200
+        settings = get_current_settings()
+        return jsonify({"status": "success", "settings": settings}), 200
     except Exception as e:
         logger.error(f"Error fetching settings: {str(e)}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/api/settings', methods=['POST', 'PUT'])
-#@token_required
+@token_required
 def update_settings():
-    """
-    Update settings in DB. If telegram creds changed, reset telegram_client.
-    """
     global settingStatus, telegram_client
     settingStatus = SettingStatus.UPDATED
     try:
@@ -760,43 +711,36 @@ def update_settings():
         if not data or not isinstance(data, dict):
             logger.warning("Invalid data format in update_settings")
             return jsonify({'status': 'error', 'message': 'Invalid data format'}), 400
-
-        for key, val in data.items():
-            if not update_setting(key, val):
-                # if update_setting fails, just put item manually
-                settings_table.put_item(Item={'key': key, 'value': str(val)})
-
-            if key in ['apiId', 'apiHash', 'phoneNumber']:
+        for key, value in data.items():
+            if not update_setting(key, value):
+                settings_table.put_item(Item={'key': key, 'value': str(value)})
+            if key in ['telegramApiId', 'telegramApiHash', 'telegramPhoneNumber']:
                 telegram_client = None
                 get_telegram_credentials()
                 logger.info("Telegram settings updated; client reset.")
-
-        cur_st = get_current_settings()
+        current_settings = get_current_settings()
         return jsonify({
             'status': 'success',
             'message': 'Settings updated',
-            'settings': cur_st
+            'settings': current_settings
         })
     except Exception as e:
         logger.error(f"Error in update_settings: {str(e)}")
         return jsonify({'status': 'error', 'message': f'Failed to update settings: {str(e)}'}), 500
 
 @app.route('/api/signal', methods=['POST'])
-#@token_required
+@token_required
 def add_signal():
-    """
-    Create a new signal entry in DB
-    """
     try:
         data = request.get_json()
         if not data:
             logger.warning("No data provided in add_signal")
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
-        sig = create_signal(data)
+        signal = create_signal(data)
         return jsonify({
             'status': 'success',
             'message': 'Signal created',
-            'signal_id': sig['id']
+            'signal_id': signal['id']
         }), 201
     except ValueError as e:
         logger.error(f"ValueError in add_signal: {str(e)}")
@@ -806,15 +750,12 @@ def add_signal():
         return jsonify({'status': 'error', 'message': f'Failed to create signal: {str(e)}'}), 500
 
 @app.route('/api/signal', methods=['GET'])
-#@token_required
+@token_required
 def get_signal():
-    """
-    Return the latest signal from DB
-    """
     try:
-        sig = get_latest_signal()
-        if sig:
-            return jsonify({'status': 'success', 'signal': sig})
+        signal = get_latest_signal()
+        if signal:
+            return jsonify({'status': 'success', 'signal': signal})
         return jsonify({
             'status': 'success',
             'message': 'No active signals found',
@@ -826,9 +767,6 @@ def get_signal():
 
 @app.route('/api/signal/history', methods=['GET'])
 def get_signal_history():
-    """
-    Return paginated signal history (no token needed as per your snippet)
-    """
     try:
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 10, type=int)
@@ -837,56 +775,55 @@ def get_signal_history():
         channel_id = request.args.get('channel')
 
         filter_expression = []
-        expr_values = {}
+        expression_attribute_values = {}
         if symbol:
             filter_expression.append('symbol = :symbol')
-            expr_values[':symbol'] = symbol.upper()
+            expression_attribute_values[':symbol'] = symbol.upper()
         if action:
             filter_expression.append('action = :action')
-            expr_values[':action'] = action.upper()
+            expression_attribute_values[':action'] = action.upper()
         if channel_id:
             filter_expression.append('channel = :channel')
-            expr_values[':channel'] = int(channel_id)
+            expression_attribute_values[':channel'] = int(channel_id)
 
         scan_kwargs = {}
         if filter_expression:
             scan_kwargs['FilterExpression'] = ' AND '.join(filter_expression)
-            scan_kwargs['ExpressionAttributeValues'] = expr_values
+            scan_kwargs['ExpressionAttributeValues'] = expression_attribute_values
 
-        resp = signals_table.scan(**scan_kwargs)
-        all_signals = resp.get('Items', [])
-        all_signals.sort(key=lambda x: x['created_at'], reverse=True)
+        response = signals_table.scan(**scan_kwargs)
+        signals = response.get('Items', [])
+        signals.sort(key=lambda x: x['created_at'], reverse=True)
 
-        total = len(all_signals)
+        total = len(signals)
         start = (page - 1) * per_page
         end = start + per_page
-        paginated = all_signals[start:end]
+        paginated_signals = signals[start:end]
 
-        sig_list = []
-        for sig in paginated:
-            tp_resp = take_profits_table.scan(
+        signal_list = []
+        for signal in paginated_signals:
+            tp_response = take_profits_table.scan(
                 FilterExpression='signal_id = :sid',
-                ExpressionAttributeValues={':sid': sig['id']}
+                ExpressionAttributeValues={':sid': signal['id']}
             )
-            tps = [tp['price'] for tp in tp_resp.get('Items', [])]
-            sig_list.append({
-                'id': sig['id'],
-                'channel': sig['channel'],
-                'symbol': sig['symbol'],
-                'action': sig['action'],
-                'entry_price': sig['entry_price'],
-                'stop_loss': sig['stop_loss'],
-                'take_profits': tps,
-                'created_at': sig['created_at']
+            take_profits = [tp['price'] for tp in tp_response.get('Items', [])]
+            signal_list.append({
+                'id': signal['id'],
+                'channel': signal['channel'],
+                'symbol': signal['symbol'],
+                'action': signal['action'],
+                'entry_price': signal['entry_price'],
+                'stop_loss': signal['stop_loss'],
+                'take_profits': take_profits,
+                'created_at': signal['created_at']
             })
 
         return jsonify({
             'status': 'success',
-            'signals': sig_list,
+            'signals': signal_list,
             'total': total,
             'pages': (total + per_page - 1) // per_page,
-            # This line below is a bit odd, but it's unchanged from your snippet
-            'current_page': signals_table.scan if not all_signals else page
+            'current_page': page
         })
     except Exception as e:
         logger.error(f"Error in get_signal_history: {str(e)}")
@@ -894,35 +831,32 @@ def get_signal_history():
 
 @app.route('/api/signal/<int:channel_id>', methods=['GET'])
 def get_channel_by_id(channel_id):
-    """
-    Return a single signal by channel ID
-    """
     try:
-        resp = signals_table.scan(
+        response = signals_table.scan(
             FilterExpression='channel = :cid',
             ExpressionAttributeValues={':cid': channel_id}
         )
-        sig = resp.get('Items', [None])[0]
-        if not sig:
+        signal = response.get('Items', [None])[0]
+        if not signal:
             return jsonify({'status': 'error', 'message': 'Signal not found'}), 404
 
-        tp_resp = take_profits_table.scan(
+        tp_response = take_profits_table.scan(
             FilterExpression='signal_id = :sid',
-            ExpressionAttributeValues={':sid': sig['id']}
+            ExpressionAttributeValues={':sid': signal['id']}
         )
-        tps = [tp['price'] for tp in tp_resp.get('Items', [])]
+        take_profits = [tp['price'] for tp in tp_response.get('Items', [])]
 
         return jsonify({
             'status': 'success',
             'signal': {
-                'id': sig['id'],
-                'channel': sig['channel'],
-                'symbol': sig['symbol'],
-                'action': sig['action'],
-                'entry_price': sig['entry_price'],
-                'stop_loss': sig['stop_loss'],
-                'take_profits': tps,
-                'created_at': sig['created_at']
+                'id': signal['id'],
+                'channel': signal['channel'],
+                'symbol': signal['symbol'],
+                'action': signal['action'],
+                'entry_price': signal['entry_price'],
+                'stop_loss': signal['stop_loss'],
+                'take_profits': take_profits,
+                'created_at': signal['created_at']
             }
         })
     except Exception as e:
@@ -931,41 +865,36 @@ def get_channel_by_id(channel_id):
 
 @app.route('/api/signal/<int:channel_id>', methods=['PUT', 'PATCH'])
 def update_signal_endpoint(channel_id):
-    """
-    Update a signal given channel_id
-    """
     try:
         data = request.get_json()
         if not data:
             logger.warning("No data provided in update_signal_endpoint")
             return jsonify({'status': 'error', 'message': 'No data provided'}), 400
-
         if 'action' in data and data['action'].upper() not in ['BUY', 'SELL']:
-            logger.warning(f"Invalid action: {data['action']}")
+            logger.warning(f"Invalid action provided: {data['action']}")
             return jsonify({'status': 'error', 'message': 'Action must be either BUY or SELL'}), 400
-
         if update_signal(channel_id, data):
-            resp = signals_table.scan(
+            response = signals_table.scan(
                 FilterExpression='channel = :cid',
                 ExpressionAttributeValues={':cid': channel_id}
             )
-            sig = resp.get('Items', [None])[0]
-            tp_resp = take_profits_table.scan(
+            signal = response.get('Items', [None])[0]
+            tp_response = take_profits_table.scan(
                 FilterExpression='signal_id = :sid',
-                ExpressionAttributeValues={':sid': sig['id']}
+                ExpressionAttributeValues={':sid': signal['id']}
             )
-            tps = [tp['price'] for tp in tp_resp.get('Items', [])]
+            take_profits = [tp['price'] for tp in tp_response.get('Items', [])]
             return jsonify({
                 'status': 'success',
                 'message': 'Signal updated',
                 'signal': {
-                    'id': sig['id'],
-                    'symbol': sig['symbol'],
-                    'action': sig['action'],
-                    'entry_price': sig['entry_price'],
-                    'stop_loss': sig['stop_loss'],
-                    'take_profits': tps,
-                    'created_at': sig['created_at']
+                    'id': signal['id'],
+                    'symbol': signal['symbol'],
+                    'action': signal['action'],
+                    'entry_price': signal['entry_price'],
+                    'stop_loss': signal['stop_loss'],
+                    'take_profits': take_profits,
+                    'created_at': signal['created_at']
                 }
             })
         return jsonify({'status': 'error', 'message': 'Signal not found'}), 404
@@ -974,12 +903,15 @@ def update_signal_endpoint(channel_id):
         return jsonify({'status': 'error', 'message': f'Failed to update signal: {str(e)}'}), 500
 
 def parse_trading_signal(signal_text: str) -> dict:
-    """
-    Parse signals with an OpenAI system prompt
-    """
-    system_prompt = """Extract trading signal details from the given text...
-    (omitted for brevity)
-    """
+    system_prompt = """Extract trading signal details from the given text and return as JSON with the following structure:
+    {
+        "symbol": "trading pair (e.g., XAUUSD, ETHUSDT)",
+        "entry_price": single price value,
+        "action": "BUY or SELL",
+        "take_profits": array of price values,
+        "stop_loss": single price value
+    }
+    Handle variations in formatting and extract partial information when possible."""
 
     try:
         response = openai_Client.chat.completions.create(
@@ -991,8 +923,7 @@ def parse_trading_signal(signal_text: str) -> dict:
         )
         logger.info(f"OpenAI response: {response.choices[0].message.content}")
         parsed = json.loads(response.choices[0].message.content)
-        if parsed.get('take_profits') is None:
-            parsed['take_profits'] = []
+        parsed['take_profits'] = parsed.get('take_profits', []) if parsed.get('take_profits') is not None else []
         return parsed
     except Exception as e:
         logger.error(f"Error parsing trading signal: {str(e)}")
@@ -1001,11 +932,12 @@ def parse_trading_signal(signal_text: str) -> dict:
 @app.route('/api/monitor', methods=['POST'])
 def monitor_channel():
     """
-    Start monitoring a list of channel_ids in a background thread
+    In the old code, we just call 'start_monitoring(channels)' in a separate thread.
+    If session is invalid, it attempts an SMS code request and raises Exception.
     """
     try:
         get_telegram_credentials()
-        data = request.get_json()
+        data = request.json
         if not data or 'channel_id' not in data:
             logger.warning("Missing channel_id in monitor request")
             return jsonify({"status": "error", "message": "channel_id is required"}), 400
@@ -1022,32 +954,26 @@ def monitor_channel():
         logger.error(f"Error in monitor_channel: {str(e)}")
         return jsonify({"status": "error", "message": f"Failed to start monitoring: {str(e)}"}), 500
 
-# ----------------------------------------------------------------------
-# 9. Example route for account info from an EA
-# ----------------------------------------------------------------------
 is_first = True
 
 @app.route('/mt/accountinfo', methods=['POST'])
 def mt_account():
-    data = request.get_json()
+    data = request.json
     if data['activeTrades'] is None:
         data['activeTrades'] = []
     if data['tradeshistory'] is None:
         data['tradeshistory'] = []
     logger.info(f"Received account info: {data}")
     socketio.emit('new_metadata', data)
-
-    global signalStatus, settingStatus, is_first
-
     signal_data = "No Signal"
     setting_data = "No Setting"
+    global signalStatus, settingStatus, is_first
 
     now = datetime.now().time()
     current_settings = get_current_settings()
     current_signal = get_latest_signal()
-    allowed_symbols = current_settings['allowedSymbols'].split(',')
+    allowedsymbol = current_settings['allowedSymbols'].split(',')
 
-    # On the first request, just return 202 w/ settings
     if is_first:
         is_first = False
         return jsonify({"signal": signal_data, "setting": current_settings}), 202
@@ -1055,19 +981,17 @@ def mt_account():
     start_time = datetime.strptime(current_settings['tradingHoursStart'], "%H:%M").time()
     end_time = datetime.strptime(current_settings['tradingHoursEnd'], "%H:%M").time()
 
-    # If the user updated settings but no new signal
     if settingStatus == SettingStatus.UPDATED and signalStatus != SignalStatus.UPDATED:
         settingStatus = SettingStatus.IDLE
         setting_data = current_settings
         logger.info("Setting updated!")
         return jsonify({"signal": signal_data, "setting": setting_data}), 202
 
-    # If within trading hours, bot enabled, a signal is found, and symbol is allowed
     if (
         start_time <= now <= end_time
         and current_settings['botEnabled']
         and current_signal
-        and current_signal['symbol'] in allowed_symbols
+        and current_signal['symbol'] in allowedsymbol
     ):
         if signalStatus == SignalStatus.UPDATED and settingStatus != SettingStatus.UPDATED:
             signalStatus = SignalStatus.IDLE
@@ -1083,15 +1007,12 @@ def mt_account():
 
 @app.route('/mt/get_trade', methods=['GET'])
 def get_trade():
-    """
-    Return the earliest 'pending' trade from Trades table, then mark it 'sent'
-    """
     try:
-        resp = trades_table.scan(
+        response = trades_table.scan(
             FilterExpression='status = :status',
             ExpressionAttributeValues={':status': 'pending'}
         )
-        trades = resp.get('Items', [])
+        trades = response.get('Items', [])
         if not trades:
             logger.debug("No pending trades found")
             return jsonify({})
@@ -1121,19 +1042,16 @@ def get_trade():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/trade', methods=['POST'])
-#@token_required
+@token_required
 def execute_trade():
-    """
-    Insert a new trade record w/ status 'pending', so the EA can pick it up
-    """
     trade_data = request.json
     logger.info(f"Received trade request: {trade_data}")
     try:
         required_fields = ['symbol', 'action', 'entry_price', 'stop_loss', 'take_profits', 'volume']
-        for f in required_fields:
-            if f not in trade_data:
-                logger.error(f"Missing required field: {f}")
-                return jsonify({'status': 'error', 'message': f'Missing required field: {f}'}), 400
+        for field in required_fields:
+            if field not in trade_data:
+                logger.error(f"Missing required field in trade: {field}")
+                return jsonify({'status': 'error', 'message': f'Missing required field: {field}'}), 400
 
         trade_id = int(uuid.uuid4().int & (1 << 31) - 1)
         created_at = datetime.utcnow().isoformat()
@@ -1149,7 +1067,7 @@ def execute_trade():
             'created_at': created_at
         }
         trades_table.put_item(Item=new_trade)
-        logger.info(f"Trade queued in DB, ID: {trade_id}")
+        logger.info(f"Trade queued in database with ID: {trade_id}")
 
         trade_dict = {
             'id': trade_id,
@@ -1159,8 +1077,8 @@ def execute_trade():
             'stop_loss': new_trade['stop_loss'],
             'take_profits': trade_data['take_profits'],
             'volume': new_trade['volume'],
-            'status': 'pending',
-            'created_at': created_at,
+            'status': new_trade['status'],
+            'created_at': new_trade['created_at'],
             'updated_at': new_trade.get('updated_at')
         }
         socketio.emit('trade_signal', trade_dict)
@@ -1170,12 +1088,12 @@ def execute_trade():
         return jsonify({'status': 'error', 'message': f'Failed to queue trade: {str(e)}'}), 500
 
 # ----------------------------------------------------------------------
-# 10. Main
+# Main
 # ----------------------------------------------------------------------
 if __name__ == '__main__':
     try:
         init_db()
-        get_telegram_credentials()  # Optionally load Telegram credentials once
+        get_telegram_credentials()  # Initialize once
         logger.info("Starting Flask-SocketIO server on http://0.0.0.0:5000")
         socketio.run(app, host="0.0.0.0", port=5000, debug=False)
     except Exception as e:
