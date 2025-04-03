@@ -17,7 +17,7 @@ export default function useAuth() {
   const pathname = usePathname();
   const { token, setToken, clearToken } = useAuthStore();
 
-  // Initial token load
+  // Load token from localStorage on app start
   useEffect(() => {
     const storedToken = localStorage.getItem('token');
     if (storedToken) setToken(storedToken);
@@ -59,7 +59,7 @@ export default function useAuth() {
     };
   }, [clearToken]);
 
-  // Auth check on load
+  // Check auth on load or route change
   useEffect(() => {
     const checkAuth = async () => {
       if (typeof window === 'undefined') return;
@@ -80,7 +80,7 @@ export default function useAuth() {
         const res = await axios.get('/api/@me');
         setUser(res.data.user);
 
-        // ✅ Redirect ONLY if valid user and you're on /auth
+        // Only redirect from /auth if already logged in
         if (pathname === '/auth' && res.data.user) {
           const from = new URLSearchParams(window.location.search).get('from') || '/';
           router.push(from);
@@ -89,6 +89,7 @@ export default function useAuth() {
         console.error('Auth check failed:', err);
         clearToken();
         setUser(null);
+        localStorage.removeItem('token');
         if (pathname !== '/auth') {
           router.push('/auth');
         }
@@ -100,12 +101,17 @@ export default function useAuth() {
     checkAuth();
   }, [pathname, router, clearToken]);
 
+  // Login
   const login = async (email: string, password: string): Promise<User> => {
     try {
       setLoading(true);
       const res = await axios.post('/api/login', { email, password });
+
+      // 🧠 Store token in localStorage
+      localStorage.setItem('token', res.data.token);
       setToken(res.data.token);
       setUser(res.data.user);
+
       const from = new URLSearchParams(window.location.search).get('from') || '/';
       router.push(from);
       return res.data.user;
@@ -117,12 +123,17 @@ export default function useAuth() {
     }
   };
 
+  // Register
   const register = async (userData: { name: string; email: string; password: string }): Promise<User> => {
     try {
       setLoading(true);
       const res = await axios.post('/api/register', userData);
+
+      // 🧠 Store token in localStorage
+      localStorage.setItem('token', res.data.token);
       setToken(res.data.token);
       setUser(res.data.user);
+
       router.push('/');
       return res.data.user;
     } catch (err: any) {
@@ -133,8 +144,10 @@ export default function useAuth() {
     }
   };
 
+  // Logout
   const logout = useCallback(() => {
     clearToken();
+    localStorage.removeItem('token');
     setUser(null);
     router.push('/auth');
   }, [clearToken, router]);
