@@ -92,7 +92,7 @@ def get_telegram_credentials():
     logger.info(f"Telegram credentials from DB => API_ID={API_ID}, API_HASH={API_HASH}, PHONE_NUMBER={PHONE_NUMBER}")
     # Retrieve the relevant settings
     response = settings_table.scan(
-        FilterExpression='key IN (:api_id, :api_hash, :phone)',
+        FilterExpression='key IN (:apiId, :apiHash, :phoneNumber)',
         ExpressionAttributeValues={
             ':api_id': 'apiId',
             ':api_hash': 'apiHash',
@@ -102,9 +102,9 @@ def get_telegram_credentials():
     items = response.get('Items', [])
     creds = {item['key']: item['value'] for item in items}
 
-    API_ID = creds.get('apiId')
-    API_HASH = creds.get('apiHash')
-    PHONE_NUMBER = creds.get('phoneNumber')
+    API_ID = creds.get('api_id')
+    API_HASH = creds.get('api_hash')
+    PHONE_NUMBER = creds.get('phone')
 
     if not API_ID or not API_HASH or not PHONE_NUMBER:
         logger.error(f"Missing Telegram credentials in Settings: API_ID={API_ID}, API_HASH={API_HASH}, PHONE_NUMBER={PHONE_NUMBER}")
