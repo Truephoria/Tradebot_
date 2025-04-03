@@ -420,7 +420,7 @@ def token_required(f):
         token = auth_header.split(' ')[1]
         try:
             payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
-            g.user_id = payload['user_id']
+            g.user_id = int(payload['user_id'])
             logger.info("Token validated successfully, user ID: %s", g.user_id)
         except jwt.ExpiredSignatureError:
             logger.warning("Token has expired")
@@ -537,18 +537,27 @@ def login_user():
 @app.route("/api/@me")
 @token_required
 def get_current_user():
-    user_id = g.user_id
-    response = users_table.get_item(Key={'id': user_id})
-    user = response.get('Item')
-    if not user:
-        logger.warning(f"User not found for ID: {user_id}")
-        return jsonify({"error": "User not found"}), 404
+    try:
+        user_id = int(g.user_id)  # <-- Fix: make sure it's an int!
+        logger.debug(f"Fetching user from DynamoDB with id: {user_id}")
+        response = users_table.get_item(Key={'id': user_id})
+        user = response.get('Item')
+        if not user:
+            logger.warning(f"User not found for ID: {user_id}")
+            return jsonify({"error": "User not found"}), 404
 
-    final_id = int(user['id']) if isinstance(user['id'], (int, float)) else user['id']
-    logger.info(f"Current user retrieved: {user['email']}")
-    return jsonify({
-        "user": {"id": final_id, "name": user["name"], "email": user["email"]}
-    })
+        logger.info(f"Current user retrieved: {user['email']}")
+        return jsonify({
+            "user": {
+                "id": user['id'],
+                "name": user["name"],
+                "email": user["email"]
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error in /api/@me: {str(e)}")
+        return jsonify({"error": "Failed to fetch user"}), 500
+
 
 @app.route('/api/channels/all', methods=['GET'])
 def get_channels_endpoint():
