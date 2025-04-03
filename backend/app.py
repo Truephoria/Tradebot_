@@ -111,15 +111,13 @@ def get_telegram_credentials():
         )
         raise ValueError("apiId, apiHash, and phoneNumber must be set in Settings.")
 
-    # Log what we found
+    # Log what we found (for CloudWatch)
     logger.info(
         f"Telegram credentials from DB => "
         f"API_ID={API_ID}, API_HASH={API_HASH}, PHONE_NUMBER={PHONE_NUMBER}"
     )
 
     API_ID = int(API_ID)  # ensure it's an int
-
-    # Create the Telethon client using a local file named 'session.session'
     if telegram_client is None:
         telegram_client = TelegramClient('session.session', API_ID, API_HASH)
         logger.info("Telegram client initialized from DynamoDB settings.")
@@ -205,7 +203,7 @@ async def sign_in_with_code(code):
     global pending_code_hash
     logger.info("Completing sign-in with user-provided code (old logic, improved).")
 
-    get_telegram_credentials()  # Ensure the credentials and telegram_client
+    get_telegram_credentials()
     async with TelegramClient('session.session', API_ID, API_HASH) as client:
         await client.connect()
         try:
@@ -509,7 +507,7 @@ def token_required(f):
     return decorated
 
 # ----------------------------------------------------------------------
-# API Routes (identical to your new code)
+# API Routes
 # ----------------------------------------------------------------------
 @app.route("/api/register", methods=["POST"])
 def register_user():
@@ -624,16 +622,17 @@ def get_channels_endpoint():
         logger.error(f"Error in get_channels_endpoint: {str(e)}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-# ----------------------------------------------------------------------
-# Replacing the new code's route with old code logic (fetch_subscribed_channels)
-# ----------------------------------------------------------------------
 @app.route('/api/channels', methods=['GET'])
 @token_required
 def add_channels_endpoint():
     """
     We call our 'fetch_subscribed_channels' (old logic, improved).
-    If we need a code, we raise an exception -> HTTP 401. 
+    If we need a code, we raise an exception -> HTTP 401.
     Otherwise, we fetch & add channels.
+    
+    We'll also log and return the phone number in the JSON response
+    so you can see it in CloudWatch logs (logger) and the client
+    can optionally log it in the browser console.
     """
     try:
         loop = asyncio.new_event_loop()
@@ -641,11 +640,15 @@ def add_channels_endpoint():
         channels = loop.run_until_complete(fetch_subscribed_channels())
         loop.close()
 
+        logger.info(f"Finished fetch_subscribed_channels. PHONE_NUMBER => {PHONE_NUMBER!r}")
+
         channels = add_channels(channels)
+        # Return phoneUsed so front-end can see the phone # in the response
         return jsonify({
             'status': 'success',
             'count': len(channels),
-            'channels': channels
+            'channels': channels,
+            'phoneUsed': PHONE_NUMBER
         })
     except Exception as e:
         logger.error(f"Error in add_channels_endpoint: {str(e)}")
@@ -827,7 +830,7 @@ def get_signal_history():
             'signals': signal_list,
             'total': total,
             'pages': (total + per_page - 1) // per_page,
-            'current_page': page
+            'current_page': signals_table.scan if not signals else page
         })
     except Exception as e:
         logger.error(f"Error in get_signal_history: {str(e)}")
@@ -962,7 +965,7 @@ is_first = True
 
 @app.route('/mt/accountinfo', methods=['POST'])
 def mt_account():
-    data = request.json
+    data = request.get_json()
     if data['activeTrades'] is None:
         data['activeTrades'] = []
     if data['tradeshistory'] is None:

@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { Label } from "./ui/label";
-import { Input } from "@/components/ui/input"; // Assuming you have an Input component
+import { Input } from "@/components/ui/input";
 import { useSignalStore } from "@/stores/signal-store";
 import { useChannelStore } from "@/stores/channel-store";
 import { useSettingStore } from "@/stores/settings-store";
@@ -39,8 +39,14 @@ const SignalMonitor: React.FC<SignalMonitorProps> = ({ className }) => {
 
   const handleSubscribe = async () => {
     try {
-      await channelState.fetchChannelList();
+      // Attempt to fetch channels
+      const res = await channelState.fetchChannelList();
       setError(null);
+
+      // If the backend included phoneUsed, log it in the browser console
+      if (res?.data?.phoneUsed) {
+        console.log("Phone number from server:", res.data.phoneUsed);
+      }
     } catch (err) {
       console.error("Failed to fetch channel list:", err);
       if (err instanceof Error && err.message === "TelegramAuthRequired") {
@@ -59,7 +65,7 @@ const SignalMonitor: React.FC<SignalMonitorProps> = ({ className }) => {
     }
     try {
       const response = await axios.post(
-        "/api/telegram/verify_code", // Adjust path based on your API setup
+        "/api/telegram/verify_code",
         { code: telegramCode },
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -89,7 +95,9 @@ const SignalMonitor: React.FC<SignalMonitorProps> = ({ className }) => {
     } catch (error) {
       const axiosError = error as AxiosError<{ message?: string }>;
       const errorMessage =
-        axiosError.response?.data?.message || axiosError.message || "Failed to start monitoring";
+        axiosError.response?.data?.message ||
+        axiosError.message ||
+        "Failed to start monitoring";
       console.error("Error starting monitoring:", errorMessage);
       setError(errorMessage);
     }
