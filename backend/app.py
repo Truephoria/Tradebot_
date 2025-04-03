@@ -51,7 +51,8 @@ socketio = SocketIO(
     methods=["GET", "POST", "PUT", "OPTIONS"]
 )
 
-secret_key_value = os.getenv("SECRET_KEY", "fallback-secret")
+secret_key_value = "12345"
+#os.getenv("SECRET_KEY", "fallback-secret")
 app.config['SECRET_KEY'] = secret_key_value
 SECRET_KEY = secret_key_value
 
