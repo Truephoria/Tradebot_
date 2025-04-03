@@ -89,7 +89,7 @@ def get_telegram_credentials():
     dynamic credential loading, so no .env is needed.
     """
     global API_ID, API_HASH, PHONE_NUMBER, telegram_client
-
+    logger.info(f"Telegram credentials from DB => API_ID={API_ID}, API_HASH={API_HASH}, PHONE_NUMBER={PHONE_NUMBER}")
     # Retrieve the relevant settings
     response = settings_table.scan(
         FilterExpression='key IN (:api_id, :api_hash, :phone)',
@@ -126,6 +126,7 @@ async def fetch_subscribed_channels():
 
     async with TelegramClient('session.session', API_ID, API_HASH) as client:
         if not await client.is_user_authorized():
+            logger.info(f"Using phone number: {PHONE_NUMBER!r} for SMS request.")
             logger.warning("Session invalid; sending SMS code request.")
             code_request = await client.send_code_request(
                 phone=PHONE_NUMBER,
@@ -156,10 +157,11 @@ def start_monitoring(channels):
         get_telegram_credentials()
         async with TelegramClient('session.session', API_ID, API_HASH) as client:
             if not await client.is_user_authorized():
+             logger.info(f"Using phone number: {PHONE_NUMBER!r} for SMS request.")
              logger.warning("Session invalid (monitor); sending SMS code request.")
              code_request = await client.send_code_request(
-             phone=PHONE_NUMBER,
-             force_sms=True  # <-- forcibly send SMS instead of in-app
+                phone=PHONE_NUMBER,
+                force_sms=True  # <-- forcibly send SMS instead of in-app
             )
             pending_code_hash = code_request.phone_code_hash
             raise Exception("Verification code needed. Use /telegram/verify_code with the code.")
