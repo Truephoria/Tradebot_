@@ -525,23 +525,19 @@ def login_user():
         user_name = user.get('name', '')
         user_email = user['email']
 
+        
         token = jwt.encode({
             'user_id': user_id,
             'exp': datetime.utcnow() + timedelta(hours=24)
         }, SECRET_KEY, algorithm='HS256')
 
-        refresh_token = jwt.encode({
-            'user_id': user_id,
-            'exp': datetime.utcnow() + timedelta(days=7)
-        }, SECRET_KEY, algorithm='HS256')
-
+        settings = get_current_settings()
+        logger.info(f"User logged in: {email}")
         return jsonify({
             "user": {"id": user_id, "name": user_name, "email": user_email},
             "token": token,
-            "refreshToken": refresh_token,  # ← Add this
             "settings": settings
         })
-        
     except Exception as e:
         logger.error(f"Error logging in user: {str(e)}")
         return jsonify({"error": str(e)}), 500
