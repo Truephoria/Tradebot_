@@ -5,11 +5,12 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { Label } from "./ui/label";
+import { Input } from "@/components/ui/input"; // Assuming you have an Input component
 import { useSignalStore } from "@/stores/signal-store";
 import { useChannelStore } from "@/stores/channel-store";
 import { useSettingStore } from "@/stores/settings-store";
 import { useMetadataStore } from "@/stores/metadata-store";
-import useAuth from "@/hooks/useAuth"; // Use useAuth instead of useAuthStore
+import useAuth from "@/hooks/useAuth";
 import axios from "@/utils/axios";
 import { AxiosError } from "axios";
 import { debounce } from "lodash";
@@ -23,14 +24,14 @@ const SignalMonitor: React.FC<SignalMonitorProps> = ({ className }) => {
   const channelState = useChannelStore();
   const settingState = useSettingStore();
   const metadataState = useMetadataStore();
-  const { token } = useAuth(); // Use useAuth hook
+  const { token } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [isMounted, setIsMounted] = useState(false);
+  const [showCodeModal, setShowCodeModal] = useState(false);
+  const [telegramCode, setTelegramCode] = useState("");
 
   useEffect(() => {
     setIsMounted(true);
-
-    // Fetch settings only once on mount
     settingState.getSettings().catch((err) => {
       console.error("Failed to fetch settings in useEffect:", err);
     });
@@ -39,9 +40,40 @@ const SignalMonitor: React.FC<SignalMonitorProps> = ({ className }) => {
   const handleSubscribe = async () => {
     try {
       await channelState.fetchChannelList();
+      setError(null);
     } catch (err) {
       console.error("Failed to fetch channel list:", err);
-      setError("Failed to fetch channels");
+      if (err instanceof Error && err.message === "TelegramAuthRequired") {
+        setShowCodeModal(true);
+        setError("Telegram authentication required. Check your phone for a code.");
+      } else {
+        setError("Failed to fetch channels");
+      }
+    }
+  };
+
+  const handleVerifyCode = async () => {
+    if (!token) {
+      setError("No authentication token available.");
+      return;
+    }
+    try {
+      const response = await axios.post(
+        "/api/telegram/verify_code", // Adjust path based on your API setup
+        { code: telegramCode },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (response.data.status === "success") {
+        setShowCodeModal(false);
+        setTelegramCode("");
+        setError(null);
+        handleSubscribe(); // Retry fetching channels
+      } else {
+        setError(response.data.message || "Failed to verify code.");
+      }
+    } catch (err) {
+      const axiosError = err as AxiosError<{ message?: string }>;
+      setError(axiosError.response?.data?.message || "Error verifying code.");
     }
   };
 
@@ -165,7 +197,7 @@ const SignalMonitor: React.FC<SignalMonitorProps> = ({ className }) => {
     console.log("RISK VALUE", settingState.settings.riskValue);
     try {
       const response = await axios.post("/api/trade", tradeData, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
       });
       console.log("Trade sent to Flask successfully:", response.data);
     } catch (err) {
@@ -310,13 +342,48 @@ const SignalMonitor: React.FC<SignalMonitorProps> = ({ className }) => {
           </div>
         ) : (
           <div className="flex flex-col mt-4 items-center justify-center py-8 text-center">
-            <h3 className="w-16 h-16 mb-4 rounded" >Awaiting Signals</h3>
-            <p className="text-xs text-violet-200 max-w-xs"> Monitoring the channel for new trading signals. They will appear here when detected.
+            <h3 className="w-16 h-16 mb-4 rounded">Awaiting Signals</h3>
+            <p className="text-xs text-violet-200 max-w-xs">
+              Monitoring the channel for new trading signals. They will appear here when detected.
             </p>
-            
           </div>
         )}
       </div>
+
+      {/* Telegram Verification Modal */}
+      {showCodeModal && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 z-50">
+          <div className="bg-card p-5 rounded-xl border border-border max-w-sm w-full">
+            <h3 className="text-lg font-medium text-white mb-2">Telegram Verification</h3>
+            <p className="text-sm text-muted-foreground mb-4">
+              A code has been sent to your Telegram phone number. Enter it below:
+            </p>
+            {error && showCodeModal && <p className="text-red-500 text-xs mb-2">{error}</p>}
+            <Input
+              value={telegramCode}
+              onChange={(e) => setTelegramCode(e.target.value)}
+              placeholder="e.g., 12345"
+              className="mb-4"
+            />
+            <div className="flex justify-end space-x-2">
+              <Button
+                onClick={() => setShowCodeModal(false)}
+                variant="outline"
+                className="text-white"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleVerifyCode}
+                disabled={!telegramCode}
+                className="bg-violet-600 hover:bg-violet-700 text-white"
+              >
+                Submit
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

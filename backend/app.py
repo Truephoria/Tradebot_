@@ -74,16 +74,14 @@ trades_table = dynamodb.Table('Trades')
 # ----------------------------------------------------------------------
 # Telegram Configuration
 # ----------------------------------------------------------------------
-# We’ll fetch these from Settings table in get_telegram_credentials()
 API_ID = None
 API_HASH = None
 PHONE_NUMBER = None
-
-# Single Telegram client instance (will be initialized after fetching credentials)
 telegram_client = None
+pending_code_hash = None  # Store the code hash for verification
 
 def get_telegram_credentials():
-    """Fetch Telegram credentials from the Settings table."""
+    """Fetch Telegram credentials from the Settings table and initialize client."""
     global API_ID, API_HASH, PHONE_NUMBER, telegram_client
     try:
         settings = get_current_settings()
@@ -92,17 +90,58 @@ def get_telegram_credentials():
         PHONE_NUMBER = settings.get('telegramPhoneNumber')
 
         if not API_ID or not API_HASH or not PHONE_NUMBER:
-            logger.error("Missing Telegram credentials in Settings table.")
+            logger.error("Missing Telegram credentials in Settings: API_ID=%s, API_HASH=%s, PHONE_NUMBER=%s",
+                        API_ID, API_HASH, PHONE_NUMBER)
             raise ValueError("telegramApiId, telegramApiHash, and telegramPhoneNumber must be set in Settings.")
 
-        # Initialize the client only once credentials are fetched
+        API_ID = int(API_ID)  # Ensure API_ID is an integer
         if telegram_client is None:
-            telegram_client = TelegramClient('session', int(API_ID), API_HASH)
-            logger.info("Telegram client initialized with settings from database.")
+            telegram_client = TelegramClient('session', API_ID, API_HASH)
+            logger.info("Telegram client initialized with settings: API_ID=%s, PHONE_NUMBER=%s", API_ID, PHONE_NUMBER)
         return True
-    except Exception as e:
-        logger.error(f"Failed to fetch Telegram credentials: {str(e)}")
+    except ValueError as e:
+        logger.error("Invalid Telegram credentials: %s", str(e))
         raise
+    except Exception as e:
+        logger.error("Failed to fetch Telegram credentials: %s", str(e))
+        raise
+
+async def ensure_telegram_session():
+    """Ensure the Telegram session is valid, initiating sign-in if necessary."""
+    global pending_code_hash
+    try:
+        await telegram_client.connect()
+        if not await telegram_client.is_user_authorized():
+            logger.warning("Telegram session invalid or missing; initiating sign-in.")
+            code_request = await telegram_client.send_code_request(PHONE_NUMBER)
+            pending_code_hash = code_request.phone_code_hash
+            logger.info("Code request sent to %s; phone_code_hash: %s", PHONE_NUMBER, pending_code_hash)
+            raise Exception("Verification code required to complete sign-in.")
+        logger.info("Telegram session is valid.")
+    except Exception as e:
+        logger.error("Session check failed: %s", str(e))
+        raise
+    finally:
+        if telegram_client.is_connected():
+            await telegram_client.disconnect()
+
+async def sign_in_with_code(code):
+    """Complete Telegram sign-in with the provided verification code."""
+    global pending_code_hash
+    try:
+        await telegram_client.connect()
+        await telegram_client.sign_in(PHONE_NUMBER, code, phone_code_hash=pending_code_hash)
+        logger.info("Successfully signed in with code; session saved to session.session.")
+        pending_code_hash = None  # Clear after successful sign-in
+    except errors.SessionPasswordNeededError:
+        logger.error("Two-factor authentication required; not supported yet.")
+        raise Exception("Two-factor authentication required; please disable it or handle manually.")
+    except Exception as e:
+        logger.error("Sign-in with code failed: %s", str(e))
+        raise
+    finally:
+        if telegram_client.is_connected():
+            await telegram_client.disconnect()
 
 # ----------------------------------------------------------------------
 # Enums
@@ -134,7 +173,7 @@ def init_db():
         ('riskValue', '1.5'),
         ('tradingHoursStart', '08:00'),
         ('tradingHoursEnd', '16:00'),
-        ('telegramApiId', ''),  # Add Telegram settings with empty defaults
+        ('telegramApiId', ''),
         ('telegramApiHash', ''),
         ('telegramPhoneNumber', '')
     ]
@@ -234,7 +273,6 @@ def validate_setting_value(key, value):
     elif key in ['tradingHoursStart', 'tradingHoursEnd']:
         if not re.match(r'^\d{2}:\d{2}$', str(value)):
             raise ValueError(f"{key} must be in HH:MM format")
-    # No specific validation for Telegram settings; just ensure they’re strings
     return str(value)
 
 def update_setting(key, value):
@@ -511,31 +549,32 @@ def get_channels_endpoint():
 @token_required
 def add_channels_endpoint():
     try:
-        get_telegram_credentials()  # Ensure credentials are loaded
-        async def fetch_channels():
-            await telegram_client.connect()
-            if not await telegram_client.is_user_authorized():
-                logger.warning("Telegram session invalid; attempting to regenerate.")
-                await telegram_client.send_code_request(PHONE_NUMBER)
-                # In production, we can’t use input(); this needs manual intervention or an auth endpoint
-                return None  # Indicate unauthorized state
-            dialogs = await telegram_client.get_dialogs()
-            await telegram_client.disconnect()
-            return [
-                {"name": d.entity.title, "id": str(d.entity.id)}
-                for d in dialogs if d.is_channel
-            ]
-
+        get_telegram_credentials()
+        logger.info("Fetching subscribed channels from Telegram.")
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        channels = loop.run_until_complete(fetch_channels())
-        loop.close()
-
-        if channels is None:
+        try:
+            loop.run_until_complete(ensure_telegram_session())
+        except Exception as e:
+            logger.error("Telegram session requires verification: %s", str(e))
             return jsonify({
                 'status': 'unauthorized',
-                'message': 'Telegram client not authorized. Please set credentials and authenticate manually.'
+                'message': 'Telegram session invalid. Verification code sent; use /telegram/verify_code to complete sign-in.'
             }), 401
+
+        async def fetch_channels():
+            async with telegram_client:
+                logger.info("Connected to Telegram for channel fetch.")
+                dialogs = await telegram_client.get_dialogs()
+                channels = [
+                    {"name": d.entity.title, "id": str(d.entity.id)}
+                    for d in dialogs if d.is_channel
+                ]
+                logger.info("Fetched %d channels from Telegram.", len(channels))
+                return channels
+
+        channels = loop.run_until_complete(fetch_channels())
+        loop.close()
 
         channels = add_channels(channels)
         return jsonify({
@@ -546,6 +585,31 @@ def add_channels_endpoint():
     except Exception as e:
         logger.error(f"Error in add_channels_endpoint: {str(e)}")
         return jsonify({'status': 'error', 'message': f"Failed to fetch channels: {str(e)}"}), 500
+
+@app.route('/telegram/verify_code', methods=['POST'])
+@token_required
+def verify_telegram_code():
+    """Verify the Telegram code and regenerate the session."""
+    try:
+        data = request.get_json()
+        code = data.get('code')
+        if not code:
+            logger.warning("No verification code provided.")
+            return jsonify({'status': 'error', 'message': 'Verification code required'}), 400
+
+        get_telegram_credentials()  # Ensure client is initialized
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(sign_in_with_code(code))
+        loop.close()
+
+        return jsonify({
+            'status': 'success',
+            'message': 'Telegram session regenerated successfully.'
+        }), 200
+    except Exception as e:
+        logger.error(f"Error verifying Telegram code: {str(e)}")
+        return jsonify({'status': 'error', 'message': f"Failed to verify code: {str(e)}"}), 500
 
 @app.route('/api/channels/<string:channel_id>/status', methods=['PUT'])
 def update_channel_status_endpoint(channel_id):
@@ -584,10 +648,10 @@ def update_settings():
         for key, value in data.items():
             if not update_setting(key, value):
                 settings_table.put_item(Item={'key': key, 'value': str(value)})
-            # If Telegram settings change, reinitialize the client
             if key in ['telegramApiId', 'telegramApiHash', 'telegramPhoneNumber']:
-                telegram_client = None  # Reset client to force reload
+                telegram_client = None
                 get_telegram_credentials()
+                logger.info("Telegram settings updated; client reset.")
         current_settings = get_current_settings()
         return jsonify({
             'status': 'success',
@@ -783,8 +847,9 @@ def update_signal_setting(key):
         if update_setting(key, value):
             if key in ['telegramApiId', 'telegramApiHash', 'telegramPhoneNumber']:
                 global telegram_client
-                telegram_client = None  # Reset client to force reload
+                telegram_client = None
                 get_telegram_credentials()
+                logger.info("Telegram setting %s updated; client reset.", key)
             return jsonify({
                 'status': 'success',
                 'message': f'Setting {key} updated',
@@ -795,8 +860,9 @@ def update_signal_setting(key):
             settings_table.put_item(Item={'key': key, 'value': str(value)})
             if key in ['telegramApiId', 'telegramApiHash', 'telegramPhoneNumber']:
                 global telegram_client
-                telegram_client = None  # Reset client to force reload
+                telegram_client = None
                 get_telegram_credentials()
+                logger.info("New Telegram setting %s created; client reset.", key)
             return jsonify({
                 'status': 'success',
                 'message': f'New setting {key} created',
@@ -831,32 +897,37 @@ def parse_trading_signal(signal_text: str) -> dict:
         parsed['take_profits'] = parsed.get('take_profits', []) if parsed.get('take_profits') is not None else []
         return parsed
     except Exception as e:
+        logger.error(f"Error parsing trading signal: {str(e)}")
         return {"error": str(e)}
 
 async def fetch_subscribed_channels():
-    get_telegram_credentials()  # Ensure credentials are loaded
-    async with telegram_client:
-        if not await telegram_client.is_user_authorized():
-            logger.warning("Telegram session invalid; attempting to regenerate.")
-            await telegram_client.send_code_request(PHONE_NUMBER)
-            # In production, we can’t use input(); this needs manual intervention
-            return None  # Indicate unauthorized state
-        dialogs = await telegram_client.get_dialogs()
-        return [
-            {"name": d.entity.title, "id": str(d.entity.id)}
-            for d in dialogs if d.is_channel
-        ]
+    try:
+        get_telegram_credentials()
+        logger.info("Fetching subscribed channels.")
+        await ensure_telegram_session()
+        async with telegram_client:
+            dialogs = await telegram_client.get_dialogs()
+            channels = [
+                {"name": d.entity.title, "id": str(d.entity.id)}
+                for d in dialogs if d.is_channel
+            ]
+            logger.info("Fetched %d channels.", len(channels))
+            return channels
+    except Exception as e:
+        logger.error("Failed to fetch subscribed channels: %s", str(e))
+        raise
 
 @app.route('/api/monitor', methods=['POST'])
 def monitor_channel():
     try:
-        get_telegram_credentials()  # Ensure credentials are loaded
+        get_telegram_credentials()
         data = request.json
         if not data or 'channel_id' not in data:
+            logger.warning("Missing channel_id in monitor request")
             return jsonify({"status": "error", "message": "channel_id is required"}), 400
 
         channels = [int(x) for x in data.get("channel_id")]
-        logger.info(f"Monitoring channel: {channels}")
+        logger.info(f"Starting monitoring for channels: {channels}")
 
         thread = Thread(target=start_monitoring, args=(channels,))
         thread.daemon = True
@@ -869,37 +940,37 @@ def monitor_channel():
 
 def start_monitoring(channels):
     async def monitor(channels):
-        get_telegram_credentials()  # Ensure credentials are loaded
-        logger.info(f"Starting monitoring for channels: {channels}")
-        async with telegram_client:
-            if not await telegram_client.is_user_authorized():
-                logger.error("Telegram client not authorized; cannot monitor.")
-                return
+        try:
+            get_telegram_credentials()
+            logger.info(f"Monitoring channels: {channels}")
+            await ensure_telegram_session()
+            async with telegram_client:
+                @telegram_client.on(events.NewMessage(chats=channels))
+                async def handler(event):
+                    chat = await event.get_chat()
+                    channel_id = chat.id
+                    message_text = event.message.message
+                    logger.info(f"Received message from channel {channel_id}: {message_text}")
+                    if "buy" in message_text.lower() or "sell" in message_text.lower():
+                        global signalStatus
+                        signalStatus = SignalStatus.UPDATED
+                        parsed_signal = parse_trading_signal(message_text)
+                        update_signal(1, parsed_signal)
+                        logger.info(f"Parsed signal: {parsed_signal}")
+                        socketio.emit('new_signal', parsed_signal)
 
-            @telegram_client.on(events.NewMessage(chats=channels))
-            async def handler(event):
-                chat = await event.get_chat()
-                channel_id = chat.id
-                message_text = event.message.message
-                logger.info(f"Received message from channel {channel_id}: {message_text}")
-                if "buy" in message_text.lower() or "sell" in message_text.lower():
-                    global signalStatus
-                    signalStatus = SignalStatus.UPDATED
-                    parsed_signal = parse_trading_signal(message_text)
-                    update_signal(1, parsed_signal)
-                    logger.info(f"Received signal from channel {channel_id}: {parsed_signal}")
-                    socketio.emit('new_signal', parsed_signal)
-
-            await telegram_client.run_until_disconnected()
+                await telegram_client.run_until_disconnected()
+                logger.info("Telegram client disconnected.")
+        except Exception as e:
+            logger.error(f"Monitoring failed: {str(e)}")
+            raise
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
         loop.run_until_complete(monitor(channels))
-    except KeyboardInterrupt:
-        logger.info("Monitoring stopped by user")
     except Exception as e:
-        logger.error(f"Error in monitoring: {str(e)}")
+        logger.error(f"Error in monitoring loop: {str(e)}")
     finally:
         loop.close()
 
@@ -1040,7 +1111,7 @@ def execute_trade():
 if __name__ == '__main__':
     try:
         init_db()
-        get_telegram_credentials()  # Load Telegram credentials at startup
+        get_telegram_credentials()
         logger.info("Starting Flask-SocketIO server on http://0.0.0.0:5000")
         socketio.run(app, host="0.0.0.0", port=5000, debug=False)
     except Exception as e:

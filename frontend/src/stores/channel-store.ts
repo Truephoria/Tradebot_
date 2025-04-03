@@ -15,7 +15,7 @@ export const initChannelListState: ChannelListType = {
 
 const socket = io('https://pkbk36mqmi.us-east-2.awsapprunner.com', {
   reconnection: true,
-  withCredentials: true, // Add this to support cookies/sessions
+  withCredentials: true,
 });
 
 export const useChannelStore = create<ChannelStoreType>((set) => ({
@@ -65,7 +65,7 @@ export const useChannelStore = create<ChannelStoreType>((set) => ({
       if (!response.ok) {
         const errorData = await response.json();
         if (response.status === 401 && errorData.status === 'unauthorized') {
-          throw new Error("Telegram authentication required. Please re-authenticate.");
+          throw new Error("TelegramAuthRequired"); // Specific error for Telegram auth
         }
         throw new Error(
           `HTTP error! status: ${response.status}, message: ${errorData.message || 'Unknown error'}`
@@ -99,7 +99,7 @@ export const useChannelStore = create<ChannelStoreType>((set) => ({
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       set({ isLoading: false, error: errorMessage });
       console.error('Error fetching channels:', error);
-      throw error; // Re-throw to allow components to handle the error (e.g., show a toast)
+      throw error; // Re-throw for component handling
     }
   },
 
@@ -143,7 +143,7 @@ export const useChannelStore = create<ChannelStoreType>((set) => ({
       const token = useAuthStore.getState().token;
       if (!token) throw new Error("No authentication token available");
       const response = await fetch(
-        `https://pkbk36mqmi.us-east-2.awsapprunner.com/${channelId}/status`,
+        `https://pkbk36mqmi.us-east-2.awsapprunner.com/api/channels/${channelId}/status`, // Fixed URL typo
         {
           method: 'PUT',
           headers: {
@@ -166,7 +166,6 @@ export const useChannelStore = create<ChannelStoreType>((set) => ({
   },
 }));
 
-// Listen for new signals from SocketIO
 socket.on('connect', () => {
   console.log('Connected to SocketIO server');
 });
