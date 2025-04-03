@@ -432,6 +432,39 @@ def token_required(f):
 # ----------------------------------------------------------------------
 # API Routes
 # ----------------------------------------------------------------------
+
+@app.route('/api/refresh', methods=['POST'])
+def refresh_token():
+    try:
+        data = request.get_json()
+        refresh_token = data.get('refreshToken')
+
+        if not refresh_token:
+            return jsonify({'error': 'Missing refresh token'}), 401
+
+        try:
+            payload = jwt.decode(refresh_token, SECRET_KEY, algorithms=['HS256'])
+            user_id = payload.get('user_id')
+        except jwt.ExpiredSignatureError:
+            return jsonify({'error': 'Refresh token expired'}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({'error': 'Invalid refresh token'}), 401
+
+        # Generate new access token
+        access_token = jwt.encode({
+            'user_id': user_id,
+            'exp': datetime.utcnow() + timedelta(hours=24)
+        }, SECRET_KEY, algorithm='HS256')
+
+        return jsonify({
+            'accessToken': access_token
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error refreshing token: {str(e)}")
+        return jsonify({'error': 'Failed to refresh token'}), 500
+
+
 @app.route("/api/register", methods=["POST"])
 def register_user():
     name = request.json["name"]
@@ -497,13 +530,18 @@ def login_user():
             'exp': datetime.utcnow() + timedelta(hours=24)
         }, SECRET_KEY, algorithm='HS256')
 
-        settings = get_current_settings()
-        logger.info(f"User logged in: {email}")
+        refresh_token = jwt.encode({
+            'user_id': user_id,
+            'exp': datetime.utcnow() + timedelta(days=7)
+        }, SECRET_KEY, algorithm='HS256')
+
         return jsonify({
             "user": {"id": user_id, "name": user_name, "email": user_email},
             "token": token,
+            "refreshToken": refresh_token,  # ← Add this
             "settings": settings
         })
+        
     except Exception as e:
         logger.error(f"Error logging in user: {str(e)}")
         return jsonify({"error": str(e)}), 500

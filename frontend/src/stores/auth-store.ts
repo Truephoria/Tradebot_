@@ -3,26 +3,26 @@ import { create } from 'zustand';
 
 interface AuthState {
   token: string | null;
-  setToken: (token: string | null) => void;
+  refreshToken: string | null;
+  setToken: (token: string | null, refreshToken?: string | null) => void;
   clearToken: () => void;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
   token: typeof window !== 'undefined' ? localStorage.getItem('token') : null,
-  setToken: (token) => {
+  refreshToken: typeof window !== 'undefined' ? localStorage.getItem('refreshToken') : null,
+  setToken: (token, refreshToken) => {
     if (typeof window !== 'undefined') {
-      if (token) {
-        localStorage.setItem('token', token);
-      } else {
-        localStorage.removeItem('token');
-      }
+      if (token) localStorage.setItem('token', token);
+      if (refreshToken) localStorage.setItem('refreshToken', refreshToken);
     }
-    set({ token });
+    set({ token, refreshToken });
   },
   clearToken: () => {
     if (typeof window !== 'undefined') {
       localStorage.removeItem('token');
+      localStorage.removeItem('refreshToken');
     }
-    set({ token: null });
+    set({ token: null, refreshToken: null });
   },
 }));

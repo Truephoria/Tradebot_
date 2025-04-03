@@ -2,8 +2,7 @@
 'use client';
 import React, { useEffect, useRef, useState } from 'react';
 
-// 1) NEW: Import withAuth
-import withAuth from '@/utils/withAuth';
+
 
 import {
   Card,
@@ -530,5 +529,4 @@ const SettingsPage: React.FC = () => {
   );
 };
 
-// 2) NEW: Wrap the entire SettingsPage with withAuth, specifying redirectTo='/auth'
-export default withAuth(SettingsPage, { redirectTo: '/auth' });
+
