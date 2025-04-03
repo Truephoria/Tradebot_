@@ -587,7 +587,7 @@ def login_user():
         return jsonify({"error": str(e)}), 500
 
 @app.route("/api/@me")
-#@token_required
+@token_required
 def get_current_user():
     user_id = g.user_id
     response = users_table.get_item(Key={'id': user_id})
