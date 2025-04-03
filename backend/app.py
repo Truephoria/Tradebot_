@@ -617,7 +617,7 @@ def login_user():
         return jsonify({"error": str(e)}), 500
 
 @app.route("/api/@me")
-@token_required
+#@token_required
 def get_current_user():
     """
     Return user info based on JWT token
@@ -661,7 +661,7 @@ def get_channels_endpoint():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/channels', methods=['GET'])
-@token_required
+#@token_required
 def add_channels_endpoint():
     """
     - Calls fetch_subscribed_channels (Telethon).
@@ -692,7 +692,7 @@ def add_channels_endpoint():
         }), 401
 
 @app.route('/telegram/verify_code', methods=['POST'])
-@token_required
+#@token_required
 def verify_telegram_code():
     """
     POST { "code": "12345" }
@@ -735,7 +735,7 @@ def update_channel_status_endpoint(channel_id):
     return jsonify({'error': 'Channel not found'}), 404
 
 @app.route('/api/settings', methods=['GET'])
-@token_required
+#@token_required
 def get_settings():
     """
     Return all current settings
@@ -748,7 +748,7 @@ def get_settings():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 @app.route('/api/settings', methods=['POST', 'PUT'])
-@token_required
+#@token_required
 def update_settings():
     """
     Update settings in DB. If telegram creds changed, reset telegram_client.
@@ -782,7 +782,7 @@ def update_settings():
         return jsonify({'status': 'error', 'message': f'Failed to update settings: {str(e)}'}), 500
 
 @app.route('/api/signal', methods=['POST'])
-@token_required
+#@token_required
 def add_signal():
     """
     Create a new signal entry in DB
@@ -806,7 +806,7 @@ def add_signal():
         return jsonify({'status': 'error', 'message': f'Failed to create signal: {str(e)}'}), 500
 
 @app.route('/api/signal', methods=['GET'])
-@token_required
+#@token_required
 def get_signal():
     """
     Return the latest signal from DB
@@ -1121,7 +1121,7 @@ def get_trade():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/trade', methods=['POST'])
-@token_required
+#@token_required
 def execute_trade():
     """
     Insert a new trade record w/ status 'pending', so the EA can pick it up
