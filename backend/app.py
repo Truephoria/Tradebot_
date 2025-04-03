@@ -71,13 +71,14 @@ openai_Client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # DynamoDB Tables
 # ----------------------------------------------------------------------
 dynamodb = boto3.resource('dynamodb')
+dynamodb_client = boto3.client('dynamodb', region_name='us-east-2')
 
-users_table = dynamodb.Table('Users')
-channels_table = dynamodb.Table('Channels')
-signals_table = dynamodb.Table('Signals')
-take_profits_table = dynamodb.Table('TakeProfits')
-settings_table = dynamodb.Table('Settings')
-trades_table = dynamodb.Table('Trades')
+users_table = dynamodb_client.Table('Users')
+channels_table = dynamodb_client.Table('Channels')
+signals_table = dynamodb_client.Table('Signals')
+take_profits_table = dynamodb_client.Table('TakeProfits')
+settings_table = dynamodb_client.Table('Settings')
+trades_table = dynamodb_client.Table('Trades')
 
 # ----------------------------------------------------------------------
 # Telegram Configuration
