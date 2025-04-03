@@ -94,21 +94,21 @@ def get_telegram_credentials():
     response = settings_table.scan(
         FilterExpression='key IN (:api_id, :api_hash, :phone)',
         ExpressionAttributeValues={
-            ':api_id': 'telegramApiId',
-            ':api_hash': 'telegramApiHash',
-            ':phone': 'telegramPhoneNumber'
+            ':api_id': 'apiId',
+            ':api_hash': 'apiHash',
+            ':phone': 'phoneNumber'
         }
     )
     items = response.get('Items', [])
     creds = {item['key']: item['value'] for item in items}
 
-    API_ID = creds.get('telegramApiId')
-    API_HASH = creds.get('telegramApiHash')
-    PHONE_NUMBER = creds.get('telegramPhoneNumber')
+    API_ID = creds.get('apiId')
+    API_HASH = creds.get('apiHash')
+    PHONE_NUMBER = creds.get('phoneNumber')
 
     if not API_ID or not API_HASH or not PHONE_NUMBER:
         logger.error(f"Missing Telegram credentials in Settings: API_ID={API_ID}, API_HASH={API_HASH}, PHONE_NUMBER={PHONE_NUMBER}")
-        raise ValueError("telegramApiId, telegramApiHash, and telegramPhoneNumber must be set in Settings.")
+        raise ValueError("apiId, apiHash, and phoneNumber must be set in Settings.")
 
     API_ID = int(API_ID)  # ensure it's an int
     # Create the Telethon client using a local file named 'session.session'
@@ -157,7 +157,7 @@ def start_monitoring(channels):
         get_telegram_credentials()
         async with TelegramClient('session.session', API_ID, API_HASH) as client:
             if not await client.is_user_authorized():
-             logger.info(f"Using phone number: {PHONE_NUMBER!r} for SMS request.")
+             print(f"Using phone number: {PHONE_NUMBER!r} for SMS request.")
              logger.warning("Session invalid (monitor); sending SMS code request.")
              code_request = await client.send_code_request(
                 phone=PHONE_NUMBER,
@@ -249,9 +249,9 @@ def init_db():
         ('riskValue', '1.5'),
         ('tradingHoursStart', '08:00'),
         ('tradingHoursEnd', '16:00'),
-        ('telegramApiId', ''),
-        ('telegramApiHash', ''),
-        ('telegramPhoneNumber', '')
+        ('apiId', ''),
+        ('apiHash', ''),
+        ('phoneNumber', '')
     ]
     for key, value in default_settings:
         try:
@@ -715,7 +715,7 @@ def update_settings():
         for key, value in data.items():
             if not update_setting(key, value):
                 settings_table.put_item(Item={'key': key, 'value': str(value)})
-            if key in ['telegramApiId', 'telegramApiHash', 'telegramPhoneNumber']:
+            if key in ['apiId', 'apiHash', 'phoneNumber']:
                 telegram_client = None
                 get_telegram_credentials()
                 logger.info("Telegram settings updated; client reset.")
