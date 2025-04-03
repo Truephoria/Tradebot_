@@ -118,26 +118,20 @@ def get_telegram_credentials():
 
 
 async def fetch_subscribed_channels():
-    """
-    Old code style: 'async with TelegramClient(...)'. If session is invalid,
-    we send the SMS code and raise an Exception so the user can call
-    /telegram/verify_code with the code.
-    """
     global pending_code_hash
     logger.info("Fetching subscribed channels with old logic (improved).")
 
     # Ensure we have a fresh client
     get_telegram_credentials()
 
-    # 'async with' creates a temporary client session
     async with TelegramClient('session.session', API_ID, API_HASH) as client:
-        # If not authorized, send code via SMS
         if not await client.is_user_authorized():
             logger.warning("Session invalid; sending SMS code request.")
-            code_request = await client.send_code_request(PHONE_NUMBER)
+            code_request = await client.send_code_request(
+                phone=PHONE_NUMBER,
+                force_sms=True  # <-- ensures an actual SMS is sent
+            )
             pending_code_hash = code_request.phone_code_hash
-            # We cannot sign in automatically here, because we don't want CLI input.
-            # So raise an exception to prompt user to call /telegram/verify_code
             raise Exception("Verification code required. Use /telegram/verify_code with the code.")
 
         # If authorized, fetch channel dialogs
@@ -147,6 +141,7 @@ async def fetch_subscribed_channels():
             for dialog in dialogs if dialog.is_channel
         ]
         return channels
+
 
 
 def start_monitoring(channels):
@@ -161,15 +156,16 @@ def start_monitoring(channels):
         get_telegram_credentials()
         async with TelegramClient('session.session', API_ID, API_HASH) as client:
             if not await client.is_user_authorized():
-                logger.warning("Session invalid (monitor); sending SMS code request.")
-                code_request = await client.send_code_request(PHONE_NUMBER)
-                pending_code_hash = code_request.phone_code_hash
-                # Raise so the user knows they need to do /telegram/verify_code
-                raise Exception("Verification code needed. Use /telegram/verify_code with the code.")
+             logger.warning("Session invalid (monitor); sending SMS code request.")
+             code_request = await client.send_code_request(
+             phone=PHONE_NUMBER,
+             force_sms=True  # <-- forcibly send SMS instead of in-app
+            )
+            pending_code_hash = code_request.phone_code_hash
+            raise Exception("Verification code needed. Use /telegram/verify_code with the code.")
 
-            # If authorized, set up event listener
-            @client.on(events.NewMessage(chats=channels_list))
-            async def handler(event):
+        @client.on(events.NewMessage(chats=channels_list))
+        async def handler(event):
                 chat = await event.get_chat()
                 channel_id = chat.id
                 message_text = event.message.message
@@ -182,7 +178,7 @@ def start_monitoring(channels):
                     logger.info(f"Parsed signal: {parsed_signal}")
                     socketio.emit('new_signal', parsed_signal)
 
-            await client.run_until_disconnected()
+        await client.run_until_disconnected()
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
