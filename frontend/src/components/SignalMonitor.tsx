@@ -63,7 +63,7 @@ const SignalMonitor: React.FC<SignalMonitorProps> = ({ className }) => {
 
     try {
       // Attempt to fetch channels, passing the token
-      const res = await channelState.fetchChannelList(); 
+      const res = await channelState.fetchChannelList(token); 
       // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
       // Make sure your `fetchChannelList(token)` actually uses:
       //   axios.get("/api/channels", { headers: { Authorization: `Bearer ${token}` } })
