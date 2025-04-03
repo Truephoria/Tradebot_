@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 
 // 1) NEW: Import withAuth
-import withAuth from '@/utils/withAuth';
+
 
 import {
   Card,

@@ -31,13 +31,14 @@ const SignalMonitor: React.FC<SignalMonitorProps> = ({ className }) => {
   const [showCodeModal, setShowCodeModal] = useState(false);
   const [telegramCode, setTelegramCode] = useState("");
 
+  /*
   useEffect(() => {
     setIsMounted(true);
     settingState.getSettings().catch((err) => {
       console.error("Failed to fetch settings in useEffect:", err);
     });
   }, []);
-
+*/
   const handleSubscribe = async () => {
     try {
       await channelState.fetchChannelList();
