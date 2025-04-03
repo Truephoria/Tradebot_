@@ -67,7 +67,11 @@ export default function useAuth() {
       setIsCheckingAuth(true);
       const storedToken = localStorage.getItem('token');
       if (!storedToken) {
-        if (pathname !== '/auth') router.push('/auth');
+        clearToken();
+        localStorage.removeItem('token');
+        if (pathname !== '/auth') {
+          router.push('/auth');
+        }
         setIsCheckingAuth(false);
         return;
       }

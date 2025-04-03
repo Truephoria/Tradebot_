@@ -23,13 +23,15 @@ axiosInstance.interceptors.response.use(
   (res) => res,
   (err) => {
     if (
-      err?.response?.status === 401 &&
       typeof window !== 'undefined' &&
-      !window.location.pathname.includes('/auth')
+      err?.response?.status === 401
     ) {
-      localStorage.removeItem('token');
-      useAuthStore.getState().clearToken?.();
-      window.location.href = '/auth';
+      const pathname = window.location.pathname;
+      if (!pathname.startsWith('/auth')) {
+        useAuthStore.getState().clearToken();
+        localStorage.removeItem('token');
+        window.location.replace('/auth'); // soft reload
+      }
     }
     return Promise.reject(err);
   }

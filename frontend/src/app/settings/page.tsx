@@ -1,5 +1,7 @@
-'use client';
-import React, { useEffect, useRef, useState } from 'react';
+"use client";
+import React, { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation"; // NEW IMPORT
+import { useAuthStore } from "@/stores/auth-store"; // NEW IMPORT
 
 import {
   Card,
@@ -7,19 +9,19 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-} from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { DollarSign, Lock, Shield } from 'lucide-react';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
+} from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { DollarSign, Lock, Shield } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import {
   Form,
   FormControl,
@@ -28,22 +30,22 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
-} from '@/components/ui/form';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
-import { initializeSocket, getSocket } from '@/utils/socket';
-import { useSignalStore } from '@/stores/signal-store';
-import { SignalStateType } from '@/types/signal';
-import { toast } from 'sonner';
-import { useSettingStore } from '@/stores/settings-store';
-import { Socket } from 'socket.io-client';
+} from "@/components/ui/form";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { initializeSocket, getSocket } from "@/utils/socket";
+import { useSignalStore } from "@/stores/signal-store";
+import { SignalStateType } from "@/types/signal";
+import { toast } from "sonner";
+import { useSettingStore } from "@/stores/settings-store";
+import { Socket } from "socket.io-client";
 
 /* ------------------------------
    Risk/Trading + Telegram schema
 ------------------------------ */
 const formSchema = z.object({
-  riskType: z.enum(['FIXED', 'PERCENTAGE']),
+  riskType: z.enum(["FIXED", "PERCENTAGE"]),
   riskValue: z.coerce.number().min(0.01).max(100),
   maxDailyLoss: z.coerce.number().min(0),
   minimumRRR: z.coerce.number().min(0),
@@ -53,28 +55,41 @@ const formSchema = z.object({
   maxTradesPerDay: z.coerce.number().min(0).max(100),
   allowedSymbols: z.string(),
   botEnabled: z.boolean().default(true),
-  apiId: z.string().min(1, 'API_ID is required'),
-  apiHash: z.string().min(1, 'API_HASH is required'),
-  phoneNumber: z.string().min(1, 'PHONE_NUMBER is required'),
+  apiId: z.string().min(1, "API_ID is required"),
+  apiHash: z.string().min(1, "API_HASH is required"),
+  phoneNumber: z.string().min(1, "PHONE_NUMBER is required"),
 });
 
 const defaultSettings = {
-  riskType: 'PERCENTAGE' as const,
+  riskType: "PERCENTAGE" as const,
   riskValue: 1.5,
   maxDailyLoss: 3,
   minimumRRR: 1.5,
   enableTrailingStop: true,
-  tradingHoursStart: '08:00',
-  tradingHoursEnd: '16:00',
+  tradingHoursStart: "08:00",
+  tradingHoursEnd: "16:00",
   maxTradesPerDay: 10,
-  allowedSymbols: 'EURUSD,GBPUSD,XAUUSD,USDJPY,US30',
+  allowedSymbols: "EURUSD,GBPUSD,XAUUSD,USDJPY,US30",
   botEnabled: true,
-  apiId: '',
-  apiHash: '',
-  phoneNumber: '',
+  apiId: "",
+  apiHash: "",
+  phoneNumber: "",
 };
 
 const SettingsPage: React.FC = () => {
+  // NEW AUTH CHECK LOGIC
+  const router = useRouter();
+  const { token } = useAuthStore();
+
+  useEffect(() => {
+    if (!token) {
+      router.push("/auth"); // Redirect to login if no token
+    }
+  }, [token]);
+
+  // Prevent rendering the Settings page for a moment if user is not authenticated
+  if (!token) return null;
+
   const socket = useRef<Socket | null>(null);
   const setSignalState = useSignalStore((state) => state.setSignal);
   const { settings, getSettings, updateSettings } = useSettingStore();
@@ -96,11 +111,16 @@ const SettingsPage: React.FC = () => {
           riskValue: settings.riskValue || defaultSettings.riskValue,
           maxDailyLoss: settings.maxDailyLoss || defaultSettings.maxDailyLoss,
           minimumRRR: settings.minimumRRR || defaultSettings.minimumRRR,
-          enableTrailingStop: settings.enableTrailingStop ?? defaultSettings.enableTrailingStop,
-          tradingHoursStart: settings.tradingHoursStart || defaultSettings.tradingHoursStart,
-          tradingHoursEnd: settings.tradingHoursEnd || defaultSettings.tradingHoursEnd,
-          maxTradesPerDay: settings.maxTradesPerDay || defaultSettings.maxTradesPerDay,
-          allowedSymbols: settings.allowedSymbols || defaultSettings.allowedSymbols,
+          enableTrailingStop:
+            settings.enableTrailingStop ?? defaultSettings.enableTrailingStop,
+          tradingHoursStart:
+            settings.tradingHoursStart || defaultSettings.tradingHoursStart,
+          tradingHoursEnd:
+            settings.tradingHoursEnd || defaultSettings.tradingHoursEnd,
+          maxTradesPerDay:
+            settings.maxTradesPerDay || defaultSettings.maxTradesPerDay,
+          allowedSymbols:
+            settings.allowedSymbols || defaultSettings.allowedSymbols,
           botEnabled: settings.botEnabled ?? defaultSettings.botEnabled,
           apiId: settings.apiId || defaultSettings.apiId,
           apiHash: settings.apiHash || defaultSettings.apiHash,
@@ -109,7 +129,7 @@ const SettingsPage: React.FC = () => {
         setIsInitialLoad(false);
       })
       .catch((err) => {
-        console.error('Failed to fetch settings:', err);
+        console.error("Failed to fetch settings:", err);
         form.reset(defaultSettings);
         setIsInitialLoad(false);
       });
@@ -118,17 +138,17 @@ const SettingsPage: React.FC = () => {
     initializeSocket();
     socket.current = getSocket();
     if (!socket.current) {
-      console.error('Socket is not initialized.');
+      console.error("Socket is not initialized.");
       return;
     }
 
     const currentSocket = socket.current;
-    currentSocket.on('new_signal', (signal: SignalStateType) => {
+    currentSocket.on("new_signal", (signal: SignalStateType) => {
       setSignalState(signal);
     });
 
     return () => {
-      currentSocket.off('new_signal');
+      currentSocket.off("new_signal");
     };
   }, [form, getSettings, setSignalState]);
 
@@ -141,13 +161,20 @@ const SettingsPage: React.FC = () => {
         riskValue: settings.riskValue || defaultSettings.riskValue,
         maxDailyLoss: settings.maxDailyLoss || defaultSettings.maxDailyLoss,
         minimumRRR: settings.minimumRRR || defaultSettings.minimumRRR,
-        enableTrailingStop: settings.enableTrailingStop ?? defaultSettings.enableTrailingStop,
-        tradingHoursStart: settings.tradingHoursStart || defaultSettings.tradingHoursStart,
-        tradingHoursEnd: settings.tradingHoursEnd || defaultSettings.tradingHoursEnd,
-        maxTradesPerDay: settings.maxTradesPerDay || defaultSettings.maxTradesPerDay,
-        allowedSymbols: settings.allowedSymbols || defaultSettings.allowedSymbols,
+        enableTrailingStop:
+          settings.enableTrailingStop ?? defaultSettings.enableTrailingStop,
+        tradingHoursStart:
+          settings.tradingHoursStart || defaultSettings.tradingHoursStart,
+        tradingHoursEnd:
+          settings.tradingHoursEnd || defaultSettings.tradingHoursEnd,
+        maxTradesPerDay:
+          settings.maxTradesPerDay || defaultSettings.maxTradesPerDay,
+        allowedSymbols:
+          settings.allowedSymbols || defaultSettings.allowedSymbols,
         botEnabled: settings.botEnabled ?? defaultSettings.botEnabled,
-        
+        apiId: settings.apiId || defaultSettings.apiId,
+        apiHash: settings.apiHash || defaultSettings.apiHash,
+        phoneNumber: settings.phoneNumber || defaultSettings.phoneNumber,
       });
     }
   }, [settings, isEditing, form, isInitialLoad]);
@@ -156,11 +183,11 @@ const SettingsPage: React.FC = () => {
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
     try {
       await updateSettings(values);
-      toast.success('Settings saved successfully');
+      toast.success("Settings saved successfully");
       setIsEditing(false);
     } catch (error) {
-      console.error('Error updating settings:', error);
-      toast.error('Error updating settings');
+      console.error("Error updating settings:", error);
+      toast.error("Error updating settings");
     }
   };
 
@@ -185,23 +212,30 @@ const SettingsPage: React.FC = () => {
               <DollarSign size={16} />
               <span>Trading</span>
             </TabsTrigger>
-            <TabsTrigger value="authentication" className="flex items-center gap-2">
+            <TabsTrigger
+              value="authentication"
+              className="flex items-center gap-2"
+            >
               <Lock size={16} />
               <span>Authentication</span>
             </TabsTrigger>
           </TabsList>
 
           {/* ---------------------- */}
-          {/*  All Settings Form  */}
+          {/*  All Settings Form   */}
           {/* ---------------------- */}
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} onChange={handleFormChange}>
+            <form
+              onSubmit={form.handleSubmit(onSubmit)}
+              onChange={handleFormChange}
+            >
               <TabsContent value="risk" className="space-y-4">
                 <Card className="card-shadow border border-border">
                   <CardHeader>
                     <CardTitle>Risk Settings</CardTitle>
                     <CardDescription>
-                      Configure your risk management parameters to protect your capital
+                      Configure your risk management parameters to protect your
+                      capital
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
@@ -230,8 +264,12 @@ const SettingsPage: React.FC = () => {
                                 position="popper"
                                 className="z-50 backdrop-blur-sm bg-black/80"
                               >
-                                <SelectItem value="FIXED">Fixed Lot Size</SelectItem>
-                                <SelectItem value="PERCENTAGE">Percentage Based</SelectItem>
+                                <SelectItem value="FIXED">
+                                  Fixed Lot Size
+                                </SelectItem>
+                                <SelectItem value="PERCENTAGE">
+                                  Percentage Based
+                                </SelectItem>
                               </SelectContent>
                             </Select>
                             <FormDescription>
@@ -248,17 +286,17 @@ const SettingsPage: React.FC = () => {
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel>
-                              {form.watch('riskType') === 'FIXED'
-                                ? 'Fixed Lot Size'
-                                : 'Risk Percentage (%)'}
+                              {form.watch("riskType") === "FIXED"
+                                ? "Fixed Lot Size"
+                                : "Risk Percentage (%)"}
                             </FormLabel>
                             <FormControl>
                               <Input type="number" step="0.01" {...field} />
                             </FormControl>
                             <FormDescription>
-                              {form.watch('riskType') === 'FIXED'
-                                ? 'Standard lot size for each trade'
-                                : 'Percentage of account balance to risk per trade'}
+                              {form.watch("riskType") === "FIXED"
+                                ? "Standard lot size for each trade"
+                                : "Percentage of account balance to risk per trade"}
                             </FormDescription>
                           </FormItem>
                         )}
@@ -302,9 +340,12 @@ const SettingsPage: React.FC = () => {
                         render={({ field }) => (
                           <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
                             <div className="space-y-0.5">
-                              <FormLabel className="text-base">Trailing Stop Loss</FormLabel>
+                              <FormLabel className="text-base">
+                                Trailing Stop Loss
+                              </FormLabel>
                               <FormDescription>
-                                Automatically adjust stop loss as trade moves in your favor
+                                Automatically adjust stop loss as trade moves in
+                                your favor
                               </FormDescription>
                             </div>
                             <FormControl>
@@ -325,7 +366,9 @@ const SettingsPage: React.FC = () => {
                 <Card className="card-shadow border border-border">
                   <CardHeader>
                     <CardTitle>Trading Settings</CardTitle>
-                    <CardDescription>Configure when and what to trade</CardDescription>
+                    <CardDescription>
+                      Configure when and what to trade
+                    </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -399,7 +442,9 @@ const SettingsPage: React.FC = () => {
                         render={({ field }) => (
                           <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4 col-span-full">
                             <div className="space-y-0.5">
-                              <FormLabel className="text-base">Enable Trading Bot</FormLabel>
+                              <FormLabel className="text-base">
+                                Enable Trading Bot
+                              </FormLabel>
                               <FormDescription>
                                 Turn automated trading on or off
                               </FormDescription>
@@ -481,7 +526,8 @@ const SettingsPage: React.FC = () => {
                               />
                             </FormControl>
                             <FormDescription>
-                              Enter your phone number with the country code (e.g., +1 for the US).
+                              Enter your phone number with the country code
+                              (e.g., +1 for the US).
                             </FormDescription>
                             <FormMessage />
                           </FormItem>
