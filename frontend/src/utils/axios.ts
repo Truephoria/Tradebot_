@@ -33,7 +33,7 @@ axiosInstance.interceptors.response.use(
       const refreshToken = localStorage.getItem('refreshToken');
       if (!refreshToken) {
         useAuthStore.getState().clearToken();
-        window.location.replace('/login'); // 👈 send to login instead of /auth
+        window.location.replace('/auth'); // 👈 send to login instead of /auth
         return Promise.reject(err);
       }
 
@@ -49,7 +49,7 @@ axiosInstance.interceptors.response.use(
         return axiosInstance(originalRequest);
       } catch (refreshError) {
         useAuthStore.getState().clearToken();
-        window.location.replace('/login'); // 👈 send to login instead of /auth
+        window.location.replace('/auth'); // 👈 send to login instead of /auth
         return Promise.reject(refreshError);
       }
     }

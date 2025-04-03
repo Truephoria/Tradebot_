@@ -514,7 +514,7 @@ def login_user():
             logger.warning(f"Invalid password for email: {email}")
             return jsonify({"error": "Invalid email or password."}), 401
 
-        user_id = str(user['id']) if 'id' in user else None
+        user_id = user['id'] if 'id' in user else None
         user_name = user.get('name', '')
         user_email = user['email']
 
@@ -538,7 +538,7 @@ def login_user():
 @token_required
 def get_current_user():
     try:
-        user_id = int(g.user_id)  # <-- Fix: make sure it's an int!
+        user_id = int(g.user_id)  
         logger.debug(f"Fetching user from DynamoDB with id: {user_id}")
         response = users_table.get_item(Key={'id': user_id})
         user = response.get('Item')
