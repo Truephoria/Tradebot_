@@ -1,38 +1,38 @@
+// frontend/src/utils/axios.ts
 import axios from "axios";
 import { useAuthStore } from "@/stores/auth-store";
 
-const axiosServices = axios.create({
+const axiosInstance = axios.create({
   baseURL: "https://pkbk36mqmi.us-east-2.awsapprunner.com",
   timeout: 5000,
   withCredentials: true,
 });
 
-// Request interceptor to add the Authorization header
-axiosServices.interceptors.request.use(
-  (config) => {
-    const token = useAuthStore.getState().token; // Get token from Zustand store
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  },
-  (error) => Promise.reject(error)
-);
+// Automatically add token to headers
+axiosInstance.interceptors.request.use((config) => {
+  const token = useAuthStore.getState().token;
+  if (token) {
+    config.headers = config.headers || {};
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
 
-// Response interceptor
-axiosServices.interceptors.response.use(
-  (response) => response,
-  (error) => {
+// Auto-clear token and redirect on 401
+axiosInstance.interceptors.response.use(
+  (res) => res,
+  (err) => {
     if (
-      error.response?.status === 401 &&
-      !window.location.href.includes("/auth")
+      err?.response?.status === 401 &&
+      typeof window !== 'undefined' &&
+      !window.location.pathname.includes('/auth')
     ) {
-      window.location.pathname = "/auth";
+      localStorage.removeItem('token');
+      useAuthStore.getState().clearToken?.();
+      window.location.href = '/auth';
     }
-    return Promise.reject(
-      (error.response && error.response.data) || "Wrong Services"
-    );
+    return Promise.reject(err);
   }
 );
 
-export default axiosServices;
+export default axiosInstance;
