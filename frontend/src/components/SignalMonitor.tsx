@@ -20,50 +20,86 @@ interface SignalMonitorProps {
 }
 
 const SignalMonitor: React.FC<SignalMonitorProps> = ({ className }) => {
+  // -------------------------
+  // 1. React state & stores
+  // -------------------------
   const signalState = useSignalStore();
   const channelState = useChannelStore();
   const settingState = useSettingStore();
   const metadataState = useMetadataStore();
+
+  // This is your custom hook that presumably stores the user's JWT token
   const { token } = useAuth();
+
   const [error, setError] = useState<string | null>(null);
   const [isMounted, setIsMounted] = useState(false);
+
+  // For Telegram code verification modal
   const [showCodeModal, setShowCodeModal] = useState(false);
   const [telegramCode, setTelegramCode] = useState("");
 
+  // ----------------------------------
+  // 2. On mount, fetch settings
+  // ----------------------------------
   useEffect(() => {
     setIsMounted(true);
     settingState.getSettings().catch((err) => {
       console.error("Failed to fetch settings in useEffect:", err);
     });
-  }, []);
+  }, [settingState]);
 
+  // ----------------------------------
+  // 3. handleSubscribe
+  // ----------------------------------
+  //  We added:
+  //   - If no token, throw an error immediately.
+  //   - A better catch for 401 from the server.
   const handleSubscribe = async () => {
+    // First, ensure we have a token so the server's @token_required passes
+    if (!token) {
+      setError("No authentication token available. Please log in first.");
+      return;
+    }
+
     try {
-      // Attempt to fetch channels
-      const res = await channelState.fetchChannelList();
+      // Attempt to fetch channels, passing the token
+      const res = await channelState.fetchChannelList(); 
+      // ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      // Make sure your `fetchChannelList(token)` actually uses:
+      //   axios.get("/api/channels", { headers: { Authorization: `Bearer ${token}` } })
+      // in the channelStore code.
+
       setError(null);
 
-      // If the backend included phoneUsed, log it in the browser console
-      if (res?.data?.phoneUsed) {
-        console.log("Phone number from server:", res.data.phoneUsed);
-      }
+      
     } catch (err) {
       console.error("Failed to fetch channel list:", err);
-      if (err instanceof Error && err.message === "TelegramAuthRequired") {
+
+      // Convert to AxiosError for status checks
+      const axiosErr = err as AxiosError<{ message?: string }>;
+
+      // If the server returned a 401, it likely means Telegram session isn't authorized
+      if (axiosErr?.response?.status === 401) {
         setShowCodeModal(true);
         setError("Telegram authentication required. Check your phone for a code.");
       } else {
+        // Some other error
         setError("Failed to fetch channels");
       }
     }
   };
 
+  // ----------------------------------
+  // 4. handleVerifyCode
+  // ----------------------------------
+  //  This part is mostly the same, we just confirm we had a token check already.
   const handleVerifyCode = async () => {
     if (!token) {
       setError("No authentication token available.");
       return;
     }
     try {
+      // Send the verification code with your token
       const response = await axios.post(
         "/api/telegram/verify_code",
         { code: telegramCode },
@@ -73,7 +109,8 @@ const SignalMonitor: React.FC<SignalMonitorProps> = ({ className }) => {
         setShowCodeModal(false);
         setTelegramCode("");
         setError(null);
-        handleSubscribe(); // Retry fetching channels
+        // Retry fetching channels after successful verification
+        handleSubscribe();
       } else {
         setError(response.data.message || "Failed to verify code.");
       }
@@ -83,12 +120,18 @@ const SignalMonitor: React.FC<SignalMonitorProps> = ({ className }) => {
     }
   };
 
+  // ----------------------------------
+  // 5. startMonitoring
+  // ----------------------------------
+  //  This calls /api/monitor. 
+  //  That route doesn’t have @token_required in your code, so no headers needed.
   const startMonitoring = async (channelId: string[]) => {
     console.log("Starting monitoring for channel:", channelId);
     try {
       if (!token) {
         throw new Error("No authentication token available. Please log in.");
       }
+      // /api/monitor did NOT have @token_required, so no headers needed
       const response = await axios.post("/api/monitor", { channel_id: channelId });
       console.log("Monitoring started:", response.data);
       setError(null);
@@ -103,6 +146,9 @@ const SignalMonitor: React.FC<SignalMonitorProps> = ({ className }) => {
     }
   };
 
+  // ----------------------------------
+  // 6. isFavorable: no changes
+  // ----------------------------------
   const isFavorable = () => {
     if (
       !signalState.action ||
@@ -142,9 +188,7 @@ const SignalMonitor: React.FC<SignalMonitorProps> = ({ className }) => {
       .split(",")
       .includes(signalState.symbol);
     const isFavorableResult =
-      settingState.settings.botEnabled &&
-      rrr >= settingState.settings.minimumRRR &&
-      inAllowedSymbols;
+      settingState.settings.botEnabled && rrr >= settingState.settings.minimumRRR && inAllowedSymbols;
 
     console.log("Favorable check:", {
       rrr,
@@ -156,6 +200,9 @@ const SignalMonitor: React.FC<SignalMonitorProps> = ({ className }) => {
     return isFavorableResult;
   };
 
+  // ----------------------------------
+  // 7. calculateLotSize: no changes
+  // ----------------------------------
   const calculateLotSize = (balance: number, riskPercent: number) => {
     if (balance <= 0) {
       console.error("Invalid balance for lot size calculation:", balance);
@@ -186,6 +233,9 @@ const SignalMonitor: React.FC<SignalMonitorProps> = ({ className }) => {
     return lotSize;
   };
 
+  // ----------------------------------
+  // 8. executeTrade: no changes except token check
+  // ----------------------------------
   const executeTrade = async () => {
     if (!token) {
       console.error("No token available, cannot trade");
@@ -213,6 +263,9 @@ const SignalMonitor: React.FC<SignalMonitorProps> = ({ className }) => {
     }
   };
 
+  // ----------------------------------
+  // 9. handleTrade: no changes
+  // ----------------------------------
   const handleTrade = debounce(() => {
     if (
       signalState.action &&
@@ -225,17 +278,26 @@ const SignalMonitor: React.FC<SignalMonitorProps> = ({ className }) => {
     }
   }, 500);
 
+  // ----------------------------------
+  // 10. watch for new signals
+  // ----------------------------------
   useEffect(() => {
     handleTrade();
   }, [signalState]);
 
   if (!isMounted) return null;
 
+  // ----------------------------------
+  // 11. JSX Return
+  // ----------------------------------
   return (
     <div className={cn("bg-card rounded-xl p-5 card-shadow border border-border", className)}>
+      {/* Title */}
       <div className="flex justify-between items-start mb-1">
         <h3 className="text-sm font-medium text-muted-foreground">Signal Monitor</h3>
       </div>
+
+      {/* Subscribe & Channels */}
       <div className="space-y-4">
         <Button
           onClick={handleSubscribe}
@@ -280,6 +342,8 @@ const SignalMonitor: React.FC<SignalMonitorProps> = ({ className }) => {
           )}
         </div>
       </div>
+
+      {/* Signal Info */}
       <div className="mt-3 space-y-4">
         {signalState.action ? (
           <div className="space-y-3 animate-fade-in">
