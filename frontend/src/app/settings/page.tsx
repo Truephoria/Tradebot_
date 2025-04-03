@@ -531,4 +531,4 @@ const SettingsPage: React.FC = () => {
 };
 
 // 2) NEW: Wrap the entire SettingsPage with withAuth, specifying redirectTo='/auth'
-export default withAuth(SettingsPage, { redirectTo: '/auth' });
+export default SettingsPage
