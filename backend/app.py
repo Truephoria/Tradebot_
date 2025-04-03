@@ -25,6 +25,7 @@ from telethon.sessions import StringSession
 from openai import OpenAI
 from threading import Thread
 from boto3.dynamodb.conditions import Attr
+from boto3.dynamodb.types import TypeSerializer
 
 REFRESH_SECRET = 'your-refresh-secret-key'  # Use a different secret than access token!
 
@@ -73,12 +74,12 @@ openai_Client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 dynamodb = boto3.resource('dynamodb')
 dynamodb_client = boto3.client('dynamodb', region_name='us-east-2')
 
-users_table = dynamodb_client.Table('Users')
-channels_table = dynamodb_client.Table('Channels')
-signals_table = dynamodb_client.Table('Signals')
-take_profits_table = dynamodb_client.Table('TakeProfits')
-settings_table = dynamodb_client.Table('Settings')
-trades_table = dynamodb_client.Table('Trades')
+users_table = dynamodb.Table('Users')
+channels_table = dynamodb.Table('Channels')
+signals_table = dynamodb.Table('Signals')
+take_profits_table = dynamodb.Table('TakeProfits')
+settings_table = dynamodb.Table('Settings')
+trades_table = dynamodb.Table('Trades')
 
 # ----------------------------------------------------------------------
 # Telegram Configuration
@@ -470,7 +471,7 @@ def register_user():
     email = request.json["email"]
     password = request.json["password"]
     try:
-        response = users_table.scan(
+        response = users_table.get_item(
             FilterExpression='email = :email',
             ExpressionAttributeValues={':email': email}
         )
@@ -509,7 +510,7 @@ def login_user():
     email = request.json["email"]
     password = request.json["password"]
     try:
-        response = users_table.scan(
+        response = users_table.get_item(
             FilterExpression='email = :email',
             ExpressionAttributeValues={':email': email}
         )
@@ -553,11 +554,12 @@ def login_user():
 def get_current_user():
     try:
         user_id = int(g.user_id)
+        
+        # Initialize the TypeSerializer
+        serializer = TypeSerializer()
+        key = {'id': serializer.serialize(user_id)}
         logger.debug(f"Fetching user from DynamoDB with id: {user_id}")
-        response = users_table.scan(
-            FilterExpression='id = :id',
-            ExpressionAttributeValues={':id': user_id}
-        )
+        response = users_table.get_item(Key=key)
         items = response.get('Items', [])
         if not items:
             logger.warning(f"User not found for ID: {user_id}")

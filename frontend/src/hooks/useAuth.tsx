@@ -61,45 +61,94 @@ export default function useAuth() {
 
   // Check auth on load or route change
   useEffect(() => {
+    let isCancelled = false;
+
     const checkAuth = async () => {
-      if (typeof window === 'undefined') return;
+        if (typeof window === 'undefined' || isCancelled) return;
 
-      setIsCheckingAuth(true);
-      const storedToken = localStorage.getItem('token');
-      if (!storedToken) {
-        clearToken();
-        localStorage.removeItem('token');
-        if (pathname !== '/auth') {
-          router.push('/auth');
+        setIsCheckingAuth(true);
+        const storedToken = localStorage.getItem('token');
+        if (!storedToken) {
+            if (!isCancelled) {
+                clearToken();
+                localStorage.removeItem('token');
+                if (pathname !== '/auth') {
+                    router.push('/auth');
+                }
+                setIsCheckingAuth(false);
+            }
+            return;
         }
-        setIsCheckingAuth(false);
-        return;
-      }
 
-      try {
-        const res = await axios.get('/api/@me');
-        setUser(res.data.user);
+        const maxRetries = 3;
+        let attempt = 0;
+        let success = false;
+        let lastError = null;
 
-        // Only redirect from /auth if already logged in
-        if (pathname === '/auth' && res.data.user) {
-          const from = new URLSearchParams(window.location.search).get('from') || '/';
-          router.push(from);
+        while (attempt < maxRetries && !success && !isCancelled) {
+            try {
+                const res = await axios.get('/api/@me');
+                if (isCancelled) return;
+                setUser(res.data.user);
+                success = true;
+
+                if (pathname === '/auth' && res.data.user) {
+                    const from = new URLSearchParams(window.location.search).get('from') || '/';
+                    router.push(from);
+                }
+            } catch (err: any) {
+                attempt++;
+                lastError = err;
+                console.error(`Auth check attempt ${attempt} failed:`, {
+                    status: err.response?.status,
+                    data: err.response?.data,
+                    message: err.message,
+                });
+
+                if (err.response?.status === 401) {
+                    if (!isCancelled) {
+                        clearToken();
+                        setUser(null);
+                        localStorage.removeItem('token');
+                        if (pathname !== '/auth') {
+                            router.push('/auth');
+                        }
+                        setIsCheckingAuth(false);
+                    }
+                    return;
+                }
+
+                if (attempt < maxRetries) {
+                    await new Promise((resolve) => setTimeout(resolve, 1000));
+                }
+            }
         }
-      } catch (err) {
-        console.error('Auth check failed:', err);
-        clearToken();
-        setUser(null);
-        localStorage.removeItem('token');
-        if (pathname !== '/auth') {
-          router.push('/auth');
+
+        if (!success && !isCancelled) {
+            console.error('All auth check attempts failed:', lastError);
+            if (lastError.response?.status !== 500) {
+                clearToken();
+                setUser(null);
+                localStorage.removeItem('token');
+                if (pathname !== '/auth') {
+                    router.push('/auth');
+                }
+            } else {
+                setError('Failed to verify authentication. Please try again later.');
+            }
         }
-      } finally {
-        setIsCheckingAuth(false);
-      }
+
+        if (!isCancelled) {
+            setIsCheckingAuth(false);
+        }
     };
 
     checkAuth();
-  }, [pathname, router, clearToken]);
+
+    return () => {
+        isCancelled = true;
+    };
+}, [pathname, router, clearToken]);
 
   // Login
   const login = async (email: string, password: string): Promise<User> => {
