@@ -24,6 +24,7 @@ from telethon import TelegramClient, events, errors
 from telethon.sessions import StringSession
 from openai import OpenAI
 from threading import Thread
+from boto3.dynamodb.conditions import Attr
 
 REFRESH_SECRET = 'your-refresh-secret-key'  # Use a different secret than access token!
 
@@ -42,6 +43,7 @@ CORS(
     origins=["https://main.d1bpy75hw1zntc.amplifyapp.com"],
     supports_credentials=True,
     allow_headers=["Authorization", "Content-Type"],
+    expose_headers=["Authorization"],  # Expose Authorization header
     methods=["GET", "POST", "PUT", "OPTIONS"]
 )
 
@@ -420,7 +422,7 @@ def token_required(f):
         token = auth_header.split(' ')[1]
         try:
             payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
-            g.user_id = int(payload['user_id'])
+            g.user_id = int(payload['user_id'])  # Ensure user_id is int
             logger.info("Token validated successfully, user ID: %s", g.user_id)
         except jwt.ExpiredSignatureError:
             logger.warning("Token has expired")
@@ -442,13 +444,13 @@ def refresh_token():
 
     try:
         payload = jwt.decode(refresh_token, REFRESH_SECRET, algorithms=['HS256'])
-        user_id = payload.get('user_id')
+        user_id = int(payload.get('user_id'))  # Ensure user_id is int
         if not user_id:
             return jsonify({'error': 'Invalid refresh token payload'}), 401
 
         new_token = jwt.encode({
             'user_id': user_id,
-            'exp': datetime.datetime.utcnow() + datetime.timedelta(minutes=15)
+            'exp': datetime.utcnow() + timedelta(minutes=15)
         }, SECRET_KEY, algorithm='HS256')
 
         return jsonify({'token': new_token})
@@ -456,7 +458,6 @@ def refresh_token():
         return jsonify({'error': 'Refresh token expired'}), 401
     except jwt.InvalidTokenError:
         return jsonify({'error': 'Invalid refresh token'}), 401
-
 
 @app.route("/api/register", methods=["POST"])
 def register_user():
@@ -496,6 +497,8 @@ def register_user():
         logger.error(f"Error registering user: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
+
+
 @app.route("/api/login", methods=["POST"])
 def login_user():
     email = request.json["email"]
@@ -514,7 +517,7 @@ def login_user():
             logger.warning(f"Invalid password for email: {email}")
             return jsonify({"error": "Invalid email or password."}), 401
 
-        user_id = user['id'] if 'id' in user else None
+        user_id = int(user['id']) if 'id' in user else None  # Ensure user_id is int
         user_name = user.get('name', '')
         user_email = user['email']
 
@@ -523,11 +526,17 @@ def login_user():
             'exp': datetime.utcnow() + timedelta(hours=24)
         }, SECRET_KEY, algorithm='HS256')
 
+        refresh_token = jwt.encode({
+            'user_id': user_id,
+            'exp': datetime.utcnow() + timedelta(days=7)  # Longer expiration for refresh token
+        }, REFRESH_SECRET, algorithm='HS256')
+
         settings = get_current_settings()
         logger.info(f"User logged in: {email}")
         return jsonify({
             "user": {"id": user_id, "name": user_name, "email": user_email},
             "token": token,
+            "refreshToken": refresh_token,  # Added refresh token
             "settings": settings
         })
     except Exception as e:
@@ -538,7 +547,7 @@ def login_user():
 @token_required
 def get_current_user():
     try:
-        user_id = int(g.user_id)  
+        user_id = int(g.user_id)  # Already ensured as int in decorator
         logger.debug(f"Fetching user from DynamoDB with id: {user_id}")
         response = users_table.get_item(Key={'id': user_id})
         user = response.get('Item')
@@ -558,8 +567,8 @@ def get_current_user():
         logger.error(f"Error in /api/@me: {str(e)}")
         return jsonify({"error": "Failed to fetch user"}), 500
 
-
 @app.route('/api/channels/all', methods=['GET'])
+@token_required  # Added protection
 def get_channels_endpoint():
     try:
         channels = get_all_channels()
@@ -647,6 +656,7 @@ def verify_telegram_code():
         return jsonify({'status': 'error', 'message': f"Failed to verify code: {str(e)}"}), 500
 
 @app.route('/api/channels/<string:channel_id>/status', methods=['PUT'])
+@token_required  # Added protection
 def update_channel_status_endpoint(channel_id):
     data = request.get_json()
     if 'is_active' not in data:
@@ -669,8 +679,6 @@ def get_settings():
     except Exception as e:
         logger.error(f"Error fetching settings: {str(e)}")
         return jsonify({"status": "error", "message": str(e)}), 500
-
-
 
 @app.route('/api/settings', methods=['POST', 'PUT'])
 @token_required
@@ -737,6 +745,7 @@ def get_signal():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/signal/history', methods=['GET'])
+@token_required  # Added protection
 def get_signal_history():
     try:
         page = request.args.get('page', 1, type=int)
@@ -801,6 +810,7 @@ def get_signal_history():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/signal/<int:channel_id>', methods=['GET'])
+@token_required  # Added protection
 def get_channel_by_id(channel_id):
     try:
         response = signals_table.scan(
@@ -835,6 +845,7 @@ def get_channel_by_id(channel_id):
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/signal/<int:channel_id>', methods=['PUT', 'PATCH'])
+@token_required  # Added protection
 def update_signal_endpoint(channel_id):
     try:
         data = request.get_json()
@@ -955,6 +966,7 @@ async def fetch_subscribed_channels():
         raise
 
 @app.route('/api/monitor', methods=['POST'])
+@token_required  # Added protection
 def monitor_channel():
     try:
         get_telegram_credentials()
