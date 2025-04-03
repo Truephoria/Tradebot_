@@ -18,9 +18,9 @@ export const initSettingState: SettingsStateType = {
     maxTradesPerDay: 10,
     allowedSymbols: 'EURUSD,GBPUSD,XAUUSD,USDJPY,US30',
     botEnabled: true,
-    apiId: '', // Now a string
-    apiHash: '', // Now a string
-    phoneNumber: '', // Now a string
+    //apiId: '', // Now a string
+    //apiHash: '', // Now a string
+    //phoneNumber: '', // Now a string
   },
   isLoading: false,
   error: null,
@@ -32,8 +32,8 @@ interface SettingState {
   error: string | null;
   getSettings: () => Promise<void>;
   updateSettings: (newSettings: Partial<SettingsStateType['settings']>) => Promise<void>;
-  getTelegramSettings: () => Promise<void>;
-  updateTelegramSettings: (newSettings: Partial<Pick<SettingsStateType['settings'], 'apiId' | 'apiHash' | 'phoneNumber'>>) => Promise<void>;
+  //getTelegramSettings: () => Promise<void>;
+ // updateTelegramSettings: (newSettings: Partial<Pick<SettingsStateType['settings'], 'apiId' | 'apiHash' | 'phoneNumber'>>) => Promise<void>;
 }
 
 export const useSettingStore = create<SettingState>((set) => ({
@@ -76,6 +76,9 @@ export const useSettingStore = create<SettingState>((set) => ({
       set({ isLoading: false });
     }
   },
+ 
+
+ /*
   // Fetch Telegram settings
   getTelegramSettings: async () => {
     set({ isLoading: true });
@@ -122,5 +125,6 @@ export const useSettingStore = create<SettingState>((set) => ({
     } finally {
       set({ isLoading: false });
     }
-  },
+  }, 
+  */
 }));
